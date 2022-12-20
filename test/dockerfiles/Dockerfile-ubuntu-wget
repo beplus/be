@@ -1,0 +1,9 @@
+FROM ubuntu:latest
+
+# wget
+
+RUN apt-get update \
+    && apt-get install -y jq wget \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["/bin/bash"]

@@ -1,0 +1,34 @@
+{
+  "name": "@beplus/be",
+  "description": "Interactively Manage beplus CLI Versions",
+  "version": "0.1.0",
+  "author": "Igor Lamos <igor@be.plus>",
+  "homepage": "https://github.com/beplus/be",
+  "bugs": "https://github.com/beplus/be",
+  "bin": {
+    "be": "bin/be"
+  },
+  "files": [
+    "bin/be"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/beplus/be.git"
+  },
+  "scripts": {
+    "test": "test/bin/run-all-tests"
+  },
+  "devDependencies": {
+    "bats": "1.8.2",
+    "bats-assert": "github:bats-core/bats-assert",
+    "bats-support": "github:bats-core/bats-support"
+  },
+  "preferGlobal": true,
+  "os": [
+    "!win32"
+  ],
+  "engines": {
+    "node": "*"
+  },
+  "license": "MIT"
+}

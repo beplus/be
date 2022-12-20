@@ -1,0 +1,6 @@
+FROM amazonlinux:latest
+
+RUN yum update \
+    && yum install curl jq
+
+CMD ["/bin/bash"]
