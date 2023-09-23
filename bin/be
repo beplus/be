@@ -64,7 +64,7 @@ function n_grep() {
 # Setup and state
 #
 
-VERSION="v0.1.0"
+VERSION="v0.2.0"
 
 BE_PREFIX="${BE_PREFIX-/usr/local}"
 BE_PREFIX=${BE_PREFIX%/}
@@ -1133,7 +1133,8 @@ function display_remote_versions() {
     abort "invalid version '$1'"
   fi
 
-  local index_url="https://api.github.com/repos/beplus/cli/releases"
+  # local index_url="https://api.github.com/repos/beplus/cli/releases"
+  local index_url="https://beplus.s3.amazonaws.com/cli/releases.json"
 
   for row in $(do_get_index "${index_url}" | jq -r '.[] | @base64'); do
     _jq() {

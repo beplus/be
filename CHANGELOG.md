@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 https://github.com/beplus/be/compare/main...dev
 
+## [v0.2.0] (09/23/2023)
+
+Update the URL from which the actual available releases are being fetched.
+
 ## [v0.1.0] (12/20/2022)
 
 Initial release of `@beplus/be`.
