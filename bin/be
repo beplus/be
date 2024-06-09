@@ -64,7 +64,7 @@ function n_grep() {
 # Setup and state
 #
 
-VERSION="v0.2.0"
+VERSION="v0.3.0"
 
 BE_PREFIX="${BE_PREFIX-/usr/local}"
 BE_PREFIX=${BE_PREFIX%/}
