@@ -1,10 +1,10 @@
-PREFIX ?= /usr/local
+BE_PREFIX ?= /usr/local
 
 install: bin/be
-	mkdir -p "$(PREFIX)/bin"
-	cp bin/be "$(PREFIX)/bin/be"
+	mkdir -p "$(BE_PREFIX)/bin"
+	cp bin/be "$(BE_PREFIX)/bin/be"
 
 uninstall:
-	rm -f "$(PREFIX)/bin/be"
+	rm -f "$(BE_PREFIX)/bin/be"
 
 .PHONY: install uninstall
