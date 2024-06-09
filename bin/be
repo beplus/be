@@ -320,7 +320,7 @@ Commands:
 
 Options:
 
-  -V, --version         Output version of n
+  -V, --version         Output version of be
   -h, --help            Display help information
   -q, --quiet           Disable curl output. Disable log messages processing "auto" label.
   -d, --download        Download if necessary, and don't make active
