@@ -37,8 +37,8 @@ read -p "One Time Password for npm publish: " -r
 set -x
 npm publish . --access public --otp "${REPLY}"
 git push --follow-tags
-git checkout develop
-git merge master
+git checkout dev
+git merge main
 npm version -no-git-tag-version prepatch
 set +x
 
