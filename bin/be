@@ -919,10 +919,17 @@ function display_compatible_file_field {
 
 function tarball_url() {
   local version="$1"
+
+  # Full release version (used in GitHub tag / path)
   local url_version="${version//+/%2B}"
-  local ext=gz
+
+  # Artifact version (filename MUST NOT contain +suffix)
+  local artifact_version="${version%%+*}"
+
+  local ext="gz"
   [ "$BE_USE_XZ" = "true" ] && ext="xz"
-  echo "${g_mirror_url}/v${url_version}/beplus-cli-v${url_version}-$(display_tarball_platform).tar.${ext}"
+
+  echo "${g_mirror_url}/v${url_version}/beplus-cli-v${artifact_version}-$(display_tarball_platform).tar.${ext}"
 }
 
 #
