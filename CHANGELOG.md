@@ -11,7 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 https://github.com/beplus/be/compare/main...dev
 
-## [v0.2.0] (06/09/2024)
+## [v0.4.0] (02/06/2026)
+
+Update the install script
+Allow env-specific versions
+
+## [v0.3.0] (06/09/2024)
 
 Add the install script
 Update the Makefile
