@@ -226,8 +226,8 @@ function update_arch_settings_for_version() {
 #
 
 function is_numeric_version() {
-  # e.g. 6, v7.1, 8.11.3, 1.0.0-alpha.56
-  [[ "$1" =~ ^[v]{0,1}[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+  # e.g. 6, v7.1, 8.11.3, 1.0.0-alpha.56, 1.0.0-beta.4+dev
+  [[ "$1" =~ ^[v]{0,1}[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
 }
 
 #
@@ -235,8 +235,8 @@ function is_numeric_version() {
 #
 
 function is_exact_numeric_version() {
-  # e.g. 6, v7.1, 8.11.3
-  [[ "$1" =~ ^[v]{0,1}[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
+  # e.g. 6, v7.1, 8.11.3, 1.0.0+dev
+  [[ "$1" =~ ^[v]{0,1}[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
 }
 
 #
@@ -919,9 +919,10 @@ function display_compatible_file_field {
 
 function tarball_url() {
   local version="$1"
+  local url_version="${version//+/%2B}"
   local ext=gz
   [ "$BE_USE_XZ" = "true" ] && ext="xz"
-  echo "${g_mirror_url}/v${version}/beplus-cli-v${version}-$(display_tarball_platform).tar.${ext}"
+  echo "${g_mirror_url}/v${url_version}/beplus-cli-v${url_version}-$(display_tarball_platform).tar.${ext}"
 }
 
 #
@@ -1134,7 +1135,8 @@ function display_remote_versions() {
   fi
 
   # local index_url="https://api.github.com/repos/beplus/cli/releases"
-  local index_url="https://beplus.s3.amazonaws.com/cli/releases.json"
+  # local index_url="https://beplus.s3.amazonaws.com/cli/releases.json"
+  local index_url="${BE_RELEASE_INDEX_URL:-https://beplus.s3.amazonaws.com/cli/releases.json}"
 
   for row in $(do_get_index "${index_url}" | jq -r '.[] | @base64'); do
     _jq() {
