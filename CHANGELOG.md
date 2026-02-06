@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 https://github.com/beplus/be/compare/main...dev
 
+## [v0.5.0] (02/06/2026)
+
+Fix the way env-specific versions are downloaded
+
 ## [v0.4.0] (02/06/2026)
 
 Update the install script
