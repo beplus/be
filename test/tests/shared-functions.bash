@@ -81,15 +81,18 @@ function display_remote_version() {
   local version="$1"
   local match='.'
   local match_count="${BE_MAX_REMOTE_MATCHES}"
+  local official_only=
 
   if [[ -z "${version}" ]]; then
     match='.'
   elif [[ "${version}" = "stable" ]]; then
     match_count=1
     match='.'
+    official_only=1
   elif [[ "${version}" = "latest" || "${version}" = "current" ]]; then
     match_count=1
     match='.'
+    official_only=1
   elif is_numeric_version "${version}"; then
     version="v${version#v}"
     # Avoid restriction message if exact version
@@ -105,8 +108,13 @@ function display_remote_version() {
 
   local index_url="https://api.github.com/repos/beplus/cli/releases"
 
+  local jq_release_filter='.[]'
+  if [[ -n "${official_only}" ]]; then
+    jq_release_filter='.[] | select(.prerelease != true and .draft != true)'
+  fi
+
   do_get_index "${index_url}" \
-    | jq -r '.[] | .name' \
+    | jq -r "${jq_release_filter} | .name" \
     | grep -E "${match}" \
     | awk "NR<=${match_count}" \
     | cut -f 1 \

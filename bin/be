@@ -1116,6 +1116,9 @@ function display_remote_versions() {
   local version="$1"
   local match='.'
   local match_count="${BE_MAX_REMOTE_MATCHES}"
+  # Restrict to official releases (skip pre-releases and drafts) for the
+  # 'latest'/'current'/'stable' labels.
+  local official_only=
 
   # Transform some labels before processing further.
   if is_beplus_support_version "${version}"; then
@@ -1131,9 +1134,11 @@ function display_remote_versions() {
   elif [[ "${version}" = "stable" ]]; then
     match_count=1
     match='.'
+    official_only=1
   elif [[ "${version}" = "latest" || "${version}" = "current" ]]; then
     match_count=1
     match='.'
+    official_only=1
   elif is_numeric_version "${version}"; then
     version="v${version#v}"
     # Avoid restriction message if exact version
@@ -1151,8 +1156,17 @@ function display_remote_versions() {
   # local index_url="https://beplus.s3.amazonaws.com/cli/releases.json"
   local index_url="${BE_RELEASE_INDEX_URL:-https://beplus.s3.amazonaws.com/cli/releases.json}"
 
+  # Select the release names to consider. GitHub lists the newest release
+  # first, including any in-progress pre-releases (e.g. a v2 published while v1
+  # is still the current release), so 'latest'/'current'/'stable' filter those
+  # out to resolve to the newest official release.
+  local jq_release_filter='.[]'
+  if [[ -n "${official_only}" ]]; then
+    jq_release_filter='.[] | select(.prerelease != true and .draft != true)'
+  fi
+
   do_get_index "${index_url}" \
-    | jq -r '.[] | .name' \
+    | jq -r "${jq_release_filter} | .name" \
     | n_grep -E "${match}" \
     | awk "NR<=${match_count}" \
     | cut -f 1 \
