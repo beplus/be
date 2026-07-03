@@ -96,20 +96,19 @@ function display_remote_version() {
     is_exact_numeric_version "${version}" && match_count=1
     # Quote any dots in version so they are literal for expression
     match="${version//\./\.}"
-    # Avoid 1.2 matching 1.23
-    match="^${match}[^0-9]"
+    # Anchor the end so '1' matches v1.x but not v10.x, while an exact
+    # 'v1.2.3' still matches its bare name (which has no trailing separator).
+    match="^${match}([^0-9]|$)"
   else
     abort "invalid version '$1'"
   fi
 
   local index_url="https://api.github.com/repos/beplus/cli/releases"
 
-  for row in $(do_get_index "${index_url}" | jq -r '.[] | @base64'); do
-    _jq() {
-     echo ${row} | base64 --decode | jq -r ${1}
-    }
-   echo $(_jq '.name')
-  done | awk "NR<=${match_count}" \
+  do_get_index "${index_url}" \
+    | jq -r '.[] | .name' \
+    | grep -E "${match}" \
+    | awk "NR<=${match_count}" \
     | cut -f 1 \
     | grep -E -o '[^v].*'
 
