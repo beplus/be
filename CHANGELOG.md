@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 https://github.com/beplus/be/compare/main...dev
 
+## [v0.6.0] (07/03/2026)
+
+Fix incomplete numeric versions so they filter by series again: `be ls-remote 1` lists only `1.x`, and `be 1`/`be install v1.2` resolve to the newest matching version
+
 ## [v0.5.0] (02/06/2026)
 
 Fix the way env-specific versions are downloaded
