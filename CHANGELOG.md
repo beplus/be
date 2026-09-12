@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 https://github.com/beplus/be/compare/v0.7.0...main
 
+## [v0.8.0] (09/12/2026)
+
+Resolve versions by SemVer precedence instead of trusting the order the release index arrives in.
+The GitHub Releases API sorts by `created_at`, and every beplus/cli release shares one, so the list
+tied and came back unordered — `be 2` could hand out a stage build published before the prod one,
+and `be latest` could pick an older major. A release now always outranks the pre-releases it was
+promoted from, and pre-release build numbers compare numerically (`beta.11` > `beta.2`).
+
 ## [v0.7.0] (07/03/2026)
 
 Make `be latest`/`current`/`stable` install the newest official release, skipping pre-releases (explicit pre-release versions can still be installed)
