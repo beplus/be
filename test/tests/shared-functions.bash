@@ -11,6 +11,7 @@ function unset_n_env(){
   unset BE_MIRROR
   unset BE_DOWNLOAD_MIRROR
   unset BE_MAX_REMOTE_MATCHES
+  unset BE_RELEASE_INDEX_URL
   unset HTTP_USER
   unset HTTP_PASSWORD
   unset GREP_OPTIONS

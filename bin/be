@@ -64,7 +64,7 @@ function n_grep() {
 # Setup and state
 #
 
-VERSION="v0.7.0"
+VERSION="v0.8.0"
 
 BE_PREFIX="${BE_PREFIX-/usr/local}"
 BE_PREFIX=${BE_PREFIX%/}
@@ -1156,17 +1156,41 @@ function display_remote_versions() {
   # local index_url="https://beplus.s3.amazonaws.com/cli/releases.json"
   local index_url="${BE_RELEASE_INDEX_URL:-https://beplus.s3.amazonaws.com/cli/releases.json}"
 
-  # Select the release names to consider. GitHub lists the newest release
-  # first, including any in-progress pre-releases (e.g. a v2 published while v1
-  # is still the current release), so 'latest'/'current'/'stable' filter those
-  # out to resolve to the newest official release.
+  # Select the release names to consider. 'latest'/'current'/'stable' mean the newest official
+  # release, so they skip pre-releases and drafts.
   local jq_release_filter='.[]'
   if [[ -n "${official_only}" ]]; then
     jq_release_filter='.[] | select(.prerelease != true and .draft != true)'
   fi
 
+  # ...then order them ourselves, because no index promises to. The GitHub Releases API sorts by
+  # created_at, and every beplus/cli release shares one (the tags all point at that repo's
+  # unchanged default-branch HEAD), so the list ties and comes back in no particular order —
+  # which had `be 2` resolving to a stage build published before the prod one. Callers take the
+  # first match, so the sort is what makes "first" mean "newest".
+  #
+  # SemVer §11 sort key: major, minor, patch, then "has no pre-release" (a release outranks the
+  # pre-releases it was promoted from), then the pre-release identifiers — numeric ones compared
+  # numerically and ranked below alphanumeric ones, a longer run of identifiers winning a shared
+  # prefix. A name that is not a version sorts last rather than aborting the pipeline.
+  #
+  # This is NOT `sort -V`: GNU version sort ranks 2.0.0-dev.40 *above* 2.0.0, the opposite of
+  # SemVer, which is exactly backwards for a promotion pipeline.
+  local jq_semver_key='def semver_key:
+      ltrimstr("v")
+      | if test("^[0-9]+\\.[0-9]+\\.[0-9]+([-+].*)?$")
+        then (capture("^(?<ma>[0-9]+)\\.(?<mi>[0-9]+)\\.(?<pa>[0-9]+)(?:-(?<pre>[^+]+))?(?:\\+.*)?$")
+              | [1, (.ma|tonumber), (.mi|tonumber), (.pa|tonumber),
+                 (if .pre == null then 1 else 0 end),
+                 (if .pre == null then []
+                  else (.pre | split(".")
+                        | map(if test("^[0-9]+$") then [0, (.|tonumber), ""] else [1, 0, .] end))
+                  end)])
+        else [0, 0, 0, 0, 0, []]
+        end;'
+
   do_get_index "${index_url}" \
-    | jq -r "${jq_release_filter} | .name" \
+    | jq -r "${jq_semver_key} [ ${jq_release_filter} | .name ] | sort_by(semver_key) | reverse | .[]" \
     | n_grep -E "${match}" \
     | awk "NR<=${match_count}" \
     | cut -f 1 \
