@@ -40,7 +40,7 @@ to allow an insecure connection through the mitm proxy.
 
 `beplus` versions added to proxy cache (and used in tests):
 
-* v0.22.0
+* v2.0.0
 * latest
 
 ## Docker Tips

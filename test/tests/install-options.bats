@@ -16,31 +16,31 @@ function teardown() {
 }
 
 
-@test "be --download 0.22.0" {
-  be --download 0.22.0
-  [ -d "${BE_PREFIX}/be/versions/beplus/0.22.0" ]
+@test "be --download 2.0.0" {
+  be --download 2.0.0
+  [ -d "${BE_PREFIX}/be/versions/beplus/2.0.0" ]
   [ ! -f "${BE_PREFIX}/bin/beplus" ]
 }
 
 
-@test "be --quiet 0.22.0" {
+@test "be --quiet 2.0.0" {
   # just checking option is allowed, not testing functionality
-  be --quiet 0.22.0
-  output="$(beplus --version)"
-  assert_equal "${output}" "0.22.0"
+  be --quiet 2.0.0
+  output="$(beplus --version | cli_version)"
+  assert_equal "${output}" "2.0.0"
 }
 
 
 # variations with i/install and latest/numeric
 @test "version variations # (2 installs)" {
-  local VERSION="0.22.0"
+  local VERSION="2.0.0"
   local LATEST_VERSION="$(display_remote_version latest)"
 
   be v${VERSION}
-  output="$("${BE_PREFIX}/bin/beplus" --version)"
+  output="$("${BE_PREFIX}/bin/beplus" --version | cli_version)"
   assert_equal "${output}" "${VERSION}"
 
   be "${LATEST_VERSION}"
-  output="$("${BE_PREFIX}/bin/beplus" --version)"
+  output="$("${BE_PREFIX}/bin/beplus" --version | cli_version)"
   assert_equal "${output}" "${LATEST_VERSION}"
 }

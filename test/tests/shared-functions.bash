@@ -34,6 +34,16 @@ function setup_tmp_prefix() {
 }
 
 #
+# Synopsis: beplus --version | cli_version
+# The version a beplus binary reports, without the leading v. 2.x prints a banner whose first
+# line is "beplus CLI vX.Y.Z", where older builds printed just the version.
+#
+
+function cli_version() {
+  sed -n -E 's/^[[:space:]]*(beplus CLI )?v?([0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*)[[:space:]]*$/\2/p' | head -n 1
+}
+
+#
 # @todo Duplicate
 # Synopsis: is_numeric_version version
 #
@@ -106,7 +116,9 @@ function display_remote_version() {
     abort "invalid version '$1'"
   fi
 
-  local index_url="https://api.github.com/repos/beplus/cli/releases"
+  # The same index be reads: the GitHub Releases API lists builds the mirror does not host, and
+  # rate-limits unauthenticated callers such as CI runners.
+  local index_url="${BE_RELEASE_INDEX_URL:-https://beplus.s3.amazonaws.com/cli/releases.json}"
 
   local jq_release_filter='.[]'
   if [[ -n "${official_only}" ]]; then

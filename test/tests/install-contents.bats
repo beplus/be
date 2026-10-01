@@ -11,7 +11,7 @@ function setup() {
 
 
 @test "install: contents" {
-  readonly TARGET_VERSION="0.22.0"
+  readonly TARGET_VERSION="2.0.0"
   setup_tmp_prefix
 
   [ ! -d "${BE_PREFIX}/be/versions" ]
@@ -23,7 +23,7 @@ function setup() {
   # beplus
   [ -f "${BE_PREFIX}/bin/beplus" ]
 
-  output="$(beplus --version)"
+  output="$(beplus --version | cli_version)"
   assert_equal "${output}" "${TARGET_VERSION}"
 
   rm -rf "${TMP_PREFIX_DIR}"
@@ -32,7 +32,7 @@ function setup() {
 
 @test "install: cache prefix" {
   readonly BE_CACHE_PREFIX="$(mktemp -d)"
-  readonly TARGET_VERSION="0.22.0"
+  readonly TARGET_VERSION="2.0.0"
   setup_tmp_prefix
   export BE_CACHE_PREFIX
 
