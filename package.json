@@ -13,15 +13,22 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/beplus/be.git"
+    "url": "git+https://github.com/beplus/be.git"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "@beplus:registry": "https://registry.npmjs.org/",
+    "access": "public"
   },
   "scripts": {
-    "test": "test/bin/run-all-tests"
+    "test": "test/bin/run-all-tests",
+    "test:host": "PATH=\"$PWD/bin:$PATH\" bats test/tests",
+    "lint": "shellcheck -S warning bin/be bin/bump scripts/install.sh scripts/release/*.sh"
   },
   "devDependencies": {
     "bats": "1.8.2",
-    "bats-assert": "github:bats-core/bats-assert",
-    "bats-support": "github:bats-core/bats-support"
+    "bats-assert": "2.2.4",
+    "bats-support": "0.3.0"
   },
   "preferGlobal": true,
   "os": [
