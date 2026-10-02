@@ -32,6 +32,16 @@ function teardown() {
 }
 
 
+@test "a download that matches a v1-style SHA256SUMS line is installed" {
+  # v1.0.5 published `<name>: <hash>` lines, without a trailing newline.
+  printf '%s: %s' "${TARBALL}" "$(cut -d ' ' -f 1 "${RELEASE}/SHA256SUMS")" > "${RELEASE}/SHA256SUMS"
+
+  be 2.7.0
+  output="$(beplus --version | cli_version)"
+  assert_equal "${output}" "2.7.0"
+}
+
+
 @test "a download that does not match SHA256SUMS is not extracted" {
   echo "0000000000000000000000000000000000000000000000000000000000000000  ${TARBALL}" > "${RELEASE}/SHA256SUMS"
 

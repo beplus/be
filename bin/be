@@ -623,11 +623,12 @@ install() {
   is_ok "${url}" || abort "download preflight failed for '$version' (${url})"
 
   # The release publishes SHA256SUMS beside its tarballs. Read this tarball's line before
-  # downloading it, and extract only a download that matches it.
+  # downloading it, and extract only a download that matches it. 2.x lists `<hash>  <name>`, as
+  # sha256sum writes it; v1.0.5 lists `<name>: <hash>`.
   local sums_url="${url%/*}/SHA256SUMS"
   local sums
   sums="$(do_get_index "${sums_url}")" || abort "failed to download SHA256SUMS for $version (${sums_url})"
-  local checksum="$(echo "${sums}" | awk -v name="${url##*/}" '$2 == name { print $1; exit }')"
+  local checksum="$(echo "${sums}" | awk -v name="${url##*/}" '$2 == name { print $1; exit } $1 == name ":" { print $2; exit }')"
   [[ -n "${checksum}" ]] || abort "no checksum for ${url##*/} in ${sums_url}"
 
   log mkdir "$dir"

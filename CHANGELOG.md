@@ -16,7 +16,8 @@ https://github.com/beplus/be/compare/v0.9.0...main
 Verify every download against the `SHA256SUMS` the beplus CLI release publishes beside its
 tarballs, and extract only a match. A missing `SHA256SUMS`, a tarball it does not list or a
 mismatch aborts with the URL and extracts nothing; until now a download's integrity rested on TLS
-alone. Verifying uses `sha256sum`, or `shasum` where there is none.
+alone. Verifying uses `sha256sum`, or `shasum` where there is none. Both line forms the releases
+use are read: `<hash>  <name>` from 2.x on, and v1.0.5's `<name>: <hash>`.
 
 Detect the installed version by comparing `$BE_PREFIX/bin/beplus` with the downloads it was copied
 from. With a 2.x CLI detection always came up empty, so `be prune` deleted the installed version
