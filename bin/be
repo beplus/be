@@ -664,6 +664,14 @@ install() {
   local url="$(tarball_url "$version")"
   is_ok "${url}" || abort "download preflight failed for '$version' (${url})"
 
+  # The release publishes SHA256SUMS beside its tarballs. Read this tarball's line before
+  # downloading it, and extract only a download that matches it.
+  local sums_url="${url%/*}/SHA256SUMS"
+  local sums
+  sums="$(do_get_index "${sums_url}")" || abort "failed to download SHA256SUMS for $version (${sums_url})"
+  local checksum="$(echo "${sums}" | awk -v name="${url##*/}" '$2 == name { print $1; exit }')"
+  [[ -n "${checksum}" ]] || abort "no checksum for ${url##*/} in ${sums_url}"
+
   log mkdir "$dir"
   mkdir -p "$dir" || abort "sudo required (or change ownership, or define BE_PREFIX)"
   touch "$dir/be.lock"
@@ -671,15 +679,21 @@ install() {
   cd "${dir}" || abort "Failed to cd to ${dir}"
 
   log fetch "$url"
-  do_get "${url}" | tar "$tarflag" --no-same-owner -f - # --strip-components=1
-  pipe_results=( "${PIPESTATUS[@]}" )
-  if [[ "${pipe_results[0]}" -ne 0 ]]; then
+  local archive="${dir}/${url##*/}"
+  if ! do_get "${url}" > "${archive}"; then
+    rm -f "${archive}"
     abort "failed to download archive for $version"
   fi
-  if [[ "${pipe_results[1]}" -ne 0 ]]; then
-    abort "failed to extract archive for $version"
-  fi
   [ "$GET_SHOWS_PROGRESS" = "true" ] && erase_line
+  local download_checksum="$(display_sha256 "${archive}")"
+  if [[ "${download_checksum}" != "${checksum}" ]]; then
+    rm -f "${archive}"
+    abort "checksum mismatch for ${url}: ${sums_url} lists ${checksum}, the download is ${download_checksum}"
+  fi
+  tar "$tarflag" --no-same-owner -f "${archive}" # --strip-components=1
+  local tar_status=$?
+  rm -f "${archive}"
+  [[ "${tar_status}" -eq 0 ]] || abort "failed to extract archive for $version"
   rm -f "$dir/be.lock"
 
   disable_pax_mprotect bin/beplus
@@ -711,6 +725,21 @@ function do_get() {
   else
     abort "curl or wget command required"
   fi
+}
+
+#
+# Synopsis: display_sha256 file
+# sha256sum where it exists, otherwise shasum, which macOS has.
+#
+
+function display_sha256() {
+  local line
+  if command -v sha256sum &> /dev/null; then
+    line="$(sha256sum "$1")"
+  else
+    line="$(shasum -a 256 "$1")"
+  fi
+  echo "${line%% *}"
 }
 
 #
