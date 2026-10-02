@@ -9,7 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.8.0...main
+https://github.com/beplus/be/compare/v0.9.0...main
+
+## [v0.9.0] (10/02/2026)
+
+Verify every download against the `SHA256SUMS` the beplus CLI release publishes beside its
+tarballs, and extract only a match. A missing `SHA256SUMS`, a tarball it does not list or a
+mismatch aborts with the URL and extracts nothing; until now a download's integrity rested on TLS
+alone. Verifying uses `sha256sum`, or `shasum` where there is none.
+
+Detect the installed version by comparing `$BE_PREFIX/bin/beplus` with the downloads it was copied
+from. With a 2.x CLI detection always came up empty, so `be prune` deleted the installed version
+along with the rest.
+
+Stop `be uninstall` at end of input, deleting nothing, as if answered no. It used to ask again for
+ever.
+
+Always download the `.tar.gz`. From major 4 on, `be` asked for a `.tar.xz`, which the beplus CLI
+release does not publish; `--use-xz`, `--no-use-xz` and `BE_USE_XZ` are gone with it.
 
 ## [v0.8.0] (10/02/2026)
 
