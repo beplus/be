@@ -9,7 +9,7 @@ function setup_file() {
   # fixed directory so can reuse the two installs
   tmpdir="${TMPDIR:-/tmp}"
   export BE_PREFIX="${tmpdir}/be/test/run-which"
-  be --download 0.22.0
+  be --download 2.0.0
   be --download latest
   # using "latest" for download tests with run and exec
 }
@@ -20,26 +20,26 @@ function teardown_file() {
 
 @test "setupAll for run/which/exec # (2 installs)" {
   # Dummy test so setupAll displayed while running first setup
-  [ -d "${BE_PREFIX}/be/versions/beplus/0.22.0" ]
+  [ -d "${BE_PREFIX}/be/versions/beplus/2.0.0" ]
 }
 
 
 # be which
 
-@test "be which 0.22.0" {
-  output="$(be which 0.22.0)"
-  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/0.22.0/beplus"
+@test "be which 2.0.0" {
+  output="$(be which 2.0.0)"
+  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/2.0.0/beplus"
 }
 
 
-@test "be which v0.22.0" {
-  output="$(be which v0.22.0)"
-  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/0.22.0/beplus"
+@test "be which v2.0.0" {
+  output="$(be which v2.0.0)"
+  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/2.0.0/beplus"
 }
 
-@test "be bin v0.22.0" {
-  output="$(be bin v0.22.0)"
-  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/0.22.0/beplus"
+@test "be bin v2.0.0" {
+  output="$(be bin v2.0.0)"
+  assert_equal "$output" "${BE_PREFIX}/be/versions/beplus/2.0.0/beplus"
 }
 
 @test "be which latest" {
@@ -51,31 +51,31 @@ function teardown_file() {
 
 # be run
 
-@test "be run 0.22.0" {
-  output="$(be run 0.22.0 --version)"
-  assert_equal "$output" "0.22.0"
+@test "be run 2.0.0" {
+  output="$(be run 2.0.0 --version | cli_version)"
+  assert_equal "$output" "2.0.0"
 }
 
 @test "be run latest" {
-  output="$(be run latest --version)"
+  output="$(be run latest --version | cli_version)"
   local LATEST_VERSION="$(display_remote_version latest)"
   assert_equal "$output" "${LATEST_VERSION}"
 }
 
-@test "be use 0.22.0" {
-  output="$(be use 0.22.0 --version)"
-  assert_equal "$output" "0.22.0"
+@test "be use 2.0.0" {
+  output="$(be use 2.0.0 --version | cli_version)"
+  assert_equal "$output" "2.0.0"
 }
 
-@test "be as v0.22.0" {
-  output="$(be as 0.22.0 --version)"
-  assert_equal "$output" "0.22.0"
+@test "be as v2.0.0" {
+  output="$(be as 2.0.0 --version | cli_version)"
+  assert_equal "$output" "2.0.0"
 }
 
 @test "be run --download latest" {
   be rm latest || true
   be run --download latest --version
-  output="$(be run latest --version)"
+  output="$(be run latest --version | cli_version)"
   local LATEST_VERSION="$(display_remote_version latest)"
   assert_equal "$output" "${LATEST_VERSION}"
 }
@@ -83,13 +83,13 @@ function teardown_file() {
 
 # be exec
 
-@test "be exec v0.22.0 beplus" {
-  output="$(be exec v0.22.0 beplus --version)"
-  assert_equal "$output" "0.22.0"
+@test "be exec v2.0.0 beplus" {
+  output="$(be exec v2.0.0 beplus --version | cli_version)"
+  assert_equal "$output" "2.0.0"
 }
 
 @test "be exec latest" {
-  output="$(be exec latest beplus --version)"
+  output="$(be exec latest beplus --version | cli_version)"
   local LATEST_VERSION="$(display_remote_version latest)"
   assert_equal "$output" "${LATEST_VERSION}"
 }

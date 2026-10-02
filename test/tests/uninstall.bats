@@ -14,13 +14,13 @@ function teardown() {
 }
 
 
-@test "be uninstall (of 0.22.0)" {
-  be 0.22.0
+@test "be uninstall (of 2.0.0)" {
+  be 2.0.0
   [ -f "${BE_PREFIX}/bin/beplus" ]
 
   # Check we get all the files if we uninstall and rm cache.
   echo y | be uninstall
-  be rm 0.22.0
+  be rm 2.0.0
   output="$(find "${BE_PREFIX}" -not -type d)"
   assert_equal "$output" ""
 }

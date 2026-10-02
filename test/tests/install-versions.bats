@@ -18,15 +18,15 @@ function teardown() {
 
 # Testing version permutations in lsr tests
 
-@test "be 0.22.0" {
-  be 0.22.0
-  output="$(beplus --version)"
-  assert_equal "${output}" "0.22.0"
+@test "be 2.0.0" {
+  be 2.0.0
+  output="$(beplus --version | cli_version)"
+  assert_equal "${output}" "2.0.0"
 }
 
 
 @test "be latest" {
   be latest
-  output="$(beplus --version)"
+  output="$(beplus --version | cli_version)"
   assert_equal "${output}" "$(display_remote_version latest)"
 }
