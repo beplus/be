@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.7.0...main
+https://github.com/beplus/be/compare/v0.8.0...main
 
-## [v0.8.0] (09/12/2026)
+## [v0.8.0] (10/02/2026)
 
 Resolve versions by SemVer precedence instead of trusting the order the release index arrives in.
 The GitHub Releases API sorts by `created_at`, and every beplus/cli release shares one, so the list
