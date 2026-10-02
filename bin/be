@@ -383,28 +383,23 @@ display_be_version() {
 
 #
 # Synopsis: set_active_beplus
-# Checks cached downloads for a binary matching the active beplus CLI.
+# Checks cached downloads for the one the installed beplus CLI was copied from: activate copies
+# <cache>/beplus/<version>/beplus to $BE_PREFIX/bin/beplus, so the two files are identical.
 # Globals modified:
 # - g_active_beplus
 #
 
 function set_active_beplus() {
   g_active_beplus=
-  local beplus_path="$(command -v beplus)"
-  if [[ -x "${beplus_path}" ]]; then
-    local installed_version=$(beplus --version)
-    installed_version=${installed_version#v}
-    for dir in "${CACHE_DIR}"/*/ ; do
-      local folder_name="${dir%/}"
-      folder_name="${folder_name##*/}"
-      if diff &> /dev/null \
-        "${CACHE_DIR}/${folder_name}/${installed_version}/bin/beplus" \
-        "${beplus_path}" ; then
-        g_active_beplus="${folder_name}/${installed_version}"
-        break
-      fi
-    done
-  fi
+  local cached
+  for cached in "${CACHE_DIR}"/*/*/beplus; do
+    # cmp stops at the first difference; diff may read both binaries (~110 MB each) whole.
+    if cmp -s "${cached}" "${BE_PREFIX}/bin/beplus"; then
+      cached="${cached#"${CACHE_DIR}/"}"
+      g_active_beplus="${cached%/beplus}"
+      break
+    fi
+  done
 }
 
 #
