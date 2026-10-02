@@ -1241,7 +1241,8 @@ function delete_with_echo() {
 
 uninstall_installed() {
   while true; do
-      read -r -p "Do you wish to delete beplus CLI from ${BE_PREFIX}? " yn
+      # End of input answers no.
+      read -r -p "Do you wish to delete beplus CLI from ${BE_PREFIX}? " yn || yn="n"
       case $yn in
           [Yy]* ) break ;;
           [Nn]* ) exit ;;
