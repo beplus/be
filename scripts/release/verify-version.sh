@@ -14,13 +14,17 @@
 #
 # release  Decides what a push to main still has to do, and writes it as key=value lines to
 #          $GITHUB_OUTPUT (stdout when unset): version, tag, dist_tag, need_publish (not on npm
-#          yet) and need_release (not tagged yet). Re-checks CHANGELOG.md when either is true.
+#          yet), need_release (not tagged yet), need_github_packages (not in GitHub Packages yet,
+#          checked only when $GITHUB_PACKAGES_TOKEN is set) and source_sha (the commit the version
+#          was cut from: its tag when it has one, else HEAD). Re-checks CHANGELOG.md when any of
+#          them has to happen.
 
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 readonly NPM_REGISTRY="https://registry.npmjs.org"
+readonly GITHUB_PACKAGES_REGISTRY="https://npm.pkg.github.com"
 g_errors=0
 
 #
@@ -41,6 +45,14 @@ function notice() {
     echo "::notice::$*"
   else
     echo "$*"
+  fi
+}
+
+function warning() {
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::warning::$*" >&2
+  else
+    echo "Warning: $*" >&2
   fi
 }
 
@@ -103,17 +115,43 @@ function remote_tag_commit() {
 }
 
 #
-# npm_has_version <name> <version> — whether public npm already has that version
+# registry_has_version <registry> <name> <version> [<token>] — whether a registry already has that
+# version: returns 0 when it does, 1 when it does not, 2 when the registry gives no clear answer
+#
+
+function registry_has_version() {
+  local registry="$1" name="$2" version="$3" token="${4:-}" packument status
+  packument="$(mktemp)"
+  if [[ -n "${token}" ]]; then
+    status="$(curl -sS -o "${packument}" -w '%{http_code}' -H "Authorization: Bearer ${token}" "${registry}/${name/\//%2f}")"
+  else
+    status="$(curl -sS -o "${packument}" -w '%{http_code}' "${registry}/${name/\//%2f}")"
+  fi
+  case "${status}" in
+    200)
+      node -e '
+        const packument = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+        process.exit(packument.versions && packument.versions[process.argv[2]] ? 0 : 1);
+      ' "${packument}" "${version}" || { rm -f "${packument}"; return 1; } ;;
+    404) rm -f "${packument}"; return 1 ;;
+    *) echo "${registry} answered HTTP ${status} for ${name}." >&2; rm -f "${packument}"; return 2 ;;
+  esac
+  rm -f "${packument}"
+}
+
+#
+# npm_has_version <name> <version> — whether public npm already has that version; stops the run
+# when npm gives no clear answer
 #
 
 function npm_has_version() {
-  local status
-  status="$(curl -sS -o /dev/null -w '%{http_code}' "${NPM_REGISTRY}/${1/\//%2f}/$2")"
-  case "${status}" in
-    200) return 0 ;;
-    404) return 1 ;;
-    *) echo "Error: ${NPM_REGISTRY} answered HTTP ${status} for $1@$2." >&2; exit 2 ;;
-  esac
+  local found=0
+  registry_has_version "${NPM_REGISTRY}" "$1" "$2" || found=$?
+  if [[ "${found}" -eq 2 ]]; then
+    echo "Error: cannot tell whether npm has $1@$2." >&2
+    exit 2
+  fi
+  return "${found}"
 }
 
 function check_changelog() {
@@ -177,23 +215,41 @@ function verify_pr() {
 function verify_release() {
   finish
 
-  local need_publish=false need_release=false tag_commit dist_tag=latest
+  local need_publish=false need_release=false need_github_packages=false tag_commit source_sha
+  local dist_tag=latest found=0
   npm_has_version "${NAME}" "${VERSION}" || need_publish=true
   tag_commit="$(remote_tag_commit "${TAG}")"
   [[ -n "${tag_commit}" ]] || need_release=true
+  source_sha="${tag_commit:-$(git rev-parse HEAD)}"
   [[ "${VERSION}" != *-* ]] || dist_tag=next
+
+  # GitHub Packages is a mirror: a registry that cannot be read must not hold up the npm release,
+  # so an unclear answer means "try to publish", and that job reports the actual error.
+  if [[ -n "${GITHUB_PACKAGES_TOKEN:-}" ]]; then
+    registry_has_version "${GITHUB_PACKAGES_REGISTRY}" "${NAME}" "${VERSION}" "${GITHUB_PACKAGES_TOKEN}" || found=$?
+    case "${found}" in
+      0) ;;
+      1) need_github_packages=true ;;
+      *) need_github_packages=true
+         warning "Cannot tell whether GitHub Packages has ${NAME}@${VERSION}, so publishing it is attempted." ;;
+    esac
+  else
+    notice "GITHUB_PACKAGES_TOKEN is not set, so GitHub Packages is not checked."
+  fi
 
   # Publishing must not put a commit's code under a tag that names a different commit.
   if [[ "${need_publish}" == "true" && -n "${tag_commit}" && "${tag_commit}" != "$(git rev-parse HEAD)" ]]; then
     error "${NAME}@${VERSION} is not on npm, but tag ${TAG} points at ${tag_commit}, not HEAD. Publish from that commit or bump the version."
   fi
-  if [[ "${need_publish}" == "true" || "${need_release}" == "true" ]]; then
+  if [[ "${need_publish}" == "true" || "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
     check_changelog "${TAG}"
   fi
   finish
 
-  if [[ "${need_publish}" == "true" || "${need_release}" == "true" ]]; then
-    notice "Releasing ${NAME}@${VERSION} (publish to npm: ${need_publish}, tag and GitHub Release: ${need_release})."
+  if [[ "${need_publish}" == "true" || "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
+    notice "Releasing ${NAME}@${VERSION} from ${source_sha} (npm: ${need_publish}, tag and GitHub Release: ${need_release}, GitHub Packages: ${need_github_packages})."
+  elif [[ -n "${GITHUB_PACKAGES_TOKEN:-}" ]]; then
+    notice "Nothing to release: ${NAME}@${VERSION} is already on npm and in GitHub Packages, and tagged ${TAG}."
   else
     notice "Nothing to release: ${NAME}@${VERSION} is already on npm and tagged ${TAG}."
   fi
@@ -202,8 +258,10 @@ function verify_release() {
     echo "version=${VERSION}"
     echo "tag=${TAG}"
     echo "dist_tag=${dist_tag}"
+    echo "source_sha=${source_sha}"
     echo "need_publish=${need_publish}"
     echo "need_release=${need_release}"
+    echo "need_github_packages=${need_github_packages}"
   } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 

@@ -1,11 +1,13 @@
 name: Release
 
-# A merge into main that bumped the version publishes it to public npm and tags it with a GitHub
-# Release; any other merge finds nothing to do. Every step checks what is already done, so re-running
-# a failed run is safe. See docs/releasing.md.
+# A merge into main that bumped the version publishes it to public npm, tags it with a GitHub
+# Release, and mirrors it to GitHub Packages, as every @beplus/* repository does; any other merge
+# finds nothing to do. Every step checks what is already done, so re-running a failed run is safe.
+# See docs/releasing.md.
 #
 # npm trusts this file by name (Trusted Publisher: beplus/be, release.yml, environment npm), so
-# there is no npm token anywhere: the publish job authenticates with its OIDC token.
+# there is no npm token anywhere: the publish job authenticates with its OIDC token. GitHub Packages
+# takes the workflow's own GITHUB_TOKEN.
 
 on:
   push:
@@ -29,16 +31,23 @@ jobs:
     needs: ci
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # is the version in GitHub Packages yet
     outputs:
       version: ${{ steps.verify.outputs.version }}
       tag: ${{ steps.verify.outputs.tag }}
       dist_tag: ${{ steps.verify.outputs.dist_tag }}
+      source_sha: ${{ steps.verify.outputs.source_sha }}
       need_publish: ${{ steps.verify.outputs.need_publish }}
       need_release: ${{ steps.verify.outputs.need_release }}
+      need_github_packages: ${{ steps.verify.outputs.need_github_packages }}
     steps:
       - uses: actions/checkout@v7
       - id: verify
         run: scripts/release/verify-version.sh release
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
 
   publish:
     name: Publish ${{ needs.plan.outputs.tag }}
@@ -100,3 +109,49 @@ jobs:
         env:
           TAG: ${{ needs.plan.outputs.tag }}
           VERSION: ${{ needs.plan.outputs.version }}
+
+  github-packages:
+    name: GitHub Packages ${{ needs.plan.outputs.tag }}
+    needs: [plan, publish]
+    # After npm, so the mirror never has a version npm refused; also when there was nothing left to
+    # do on npm (publish skipped), which is how a version missing only here gets published.
+    if: >-
+      always() && needs.plan.result == 'success'
+      && needs.plan.outputs.need_github_packages == 'true'
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The commit the version was cut from, which is its tag once it has one: a later merge that
+      # bumps nothing still publishes exactly what npm has.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # publishConfig pins the @beplus scope to npmjs, and only command-line flags outrank it, so
+      # the .npmrc carries just the token, read from the environment rather than written to disk.
+      - name: Publish to GitHub Packages
+        run: |
+          echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "${RUNNER_TEMP}/.npmrc-github"
+          npm publish --userconfig "${RUNNER_TEMP}/.npmrc-github" \
+            --registry=https://npm.pkg.github.com/ --@beplus:registry=https://npm.pkg.github.com/ \
+            --tag "${DIST_TAG}"
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Mirrored ${TAG} to GitHub Packages"
+            echo
+            echo "- ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pkgs/npm/be"
+          } >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
