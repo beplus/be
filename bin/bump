@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# Prepare a release on the current branch:
+#
+#   bin/bump patch|minor|major|X.Y.Z
+#
+# Writes the new version into package.json, package-lock.json and bin/be, and opens its section in
+# CHANGELOG.md, moving any notes written under [Unreleased] into it. Commits, tags and publishes
+# nothing: put the result in a PR into main, and merging that PR releases it (docs/releasing.md).
+#
+# On a _versions/vX.Y.Z branch the argument defaults to X.Y.Z, and any other version is refused.
+# Re-running it for the version already set only re-syncs the files.
+
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+branch="$(git branch --show-current)"
+branch_version=""
+if [[ "${branch}" =~ ^_versions/v(.+)$ ]]; then
+  branch_version="${BASH_REMATCH[1]}"
+fi
+
+bump="${1:-${branch_version}}"
+if [[ -z "${bump}" ]]; then
+  echo "usage: bin/bump patch|minor|major|X.Y.Z" >&2
+  exit 2
+fi
+bump="${bump#v}"
+
+# npm computes the version; keep a copy so that a refused version leaves nothing behind.
+backup="$(mktemp -d)"
+trap 'rm -rf "${backup}"' EXIT
+cp package.json package-lock.json "${backup}/"
+
+npm version "${bump}" --no-git-tag-version --allow-same-version > /dev/null
+version="$(node -p 'require("./package.json").version')"
+
+if [[ -n "${branch_version}" && "${version}" != "${branch_version}" ]]; then
+  cp "${backup}/package.json" "${backup}/package-lock.json" .
+  echo "Error: branch ${branch} cuts v${branch_version}, not v${version}." >&2
+  exit 1
+fi
+
+sed -i.bak "s/^VERSION=\".*\"\$/VERSION=\"v${version}\"/" bin/be
+rm -f bin/be.bak
+
+#
+# CHANGELOG.md: point [Unreleased] at what main has on top of this version, and open the version's
+# section with whatever [Unreleased] collected (kept as is when the section already exists).
+#
+
+has_section=0
+if awk -v heading="## [v${version}]" 'index($0, heading) == 1 { found = 1 } END { exit !found }' CHANGELOG.md; then
+  has_section=1
+fi
+
+awk \
+  -v tag="v${version}" \
+  -v date="$(date +%m/%d/%Y)" \
+  -v link="$(node -p 'require("./package.json").homepage')/compare/v${version}...main" \
+  -v has_section="${has_section}" '
+  function flush(   i, first, last) {
+    print ""
+    print link
+    print ""
+    first = 1
+    while (first <= n && notes[first] !~ /[^[:space:]]/) first++
+    last = n
+    while (last >= first && notes[last] !~ /[^[:space:]]/) last--
+    if (!has_section) {
+      print "## [" tag "] (" date ")"
+      print ""
+    }
+    for (i = first; i <= last; i++) print notes[i]
+    if (last >= first) print ""
+    in_unreleased = 0
+  }
+  /^## \[Unreleased\]/ { print; in_unreleased = 1; next }
+  in_unreleased && /^## \[/ { flush(); print; next }
+  in_unreleased {
+    if ($0 !~ /^https?:\/\/[^ ]*\/compare\//) notes[++n] = $0
+    next
+  }
+  { print }
+  END { if (in_unreleased) flush() }
+' CHANGELOG.md > "${backup}/CHANGELOG.md"
+cat "${backup}/CHANGELOG.md" > CHANGELOG.md
+
+echo "Bumped to v${version}: package.json, package-lock.json, bin/be, CHANGELOG.md."
+if ! scripts/release/changelog-notes.sh "v${version}" > /dev/null 2>&1; then
+  echo "Next: describe the release under \"## [v${version}]\" in CHANGELOG.md."
+fi
+echo "Then commit and open a PR into main; merging it publishes v${version}."

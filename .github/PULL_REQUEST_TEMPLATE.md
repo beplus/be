@@ -18,8 +18,11 @@ How did you solve the problem?
 Show the fixed output if appropriate.
 -->
 
-## ChangeLog
+## Release
 
 <!--
-Optional. Suggest a line for adding to the CHANGELOG to summarise your change.
+Merging a PR into main that bumps the version publishes it (docs/releasing.md). Pick one:
 -->
+
+- [ ] Releases vX.Y.Z: ran `bin/bump …` and described it in CHANGELOG.md
+- [ ] No release: `bin/be` is unchanged
