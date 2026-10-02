@@ -42,6 +42,17 @@ function teardown() {
 }
 
 
+@test "a download under a path with a backslash in it is installed" {
+  # Given a file name with a backslash, GNU sha256sum and shasum escape it and put a backslash
+  # in front of the hash.
+  export BE_CACHE_PREFIX="${TMP_PREFIX_DIR}/back\\slash"
+
+  be 2.7.0
+  output="$(beplus --version | cli_version)"
+  assert_equal "${output}" "2.7.0"
+}
+
+
 @test "a download that does not match SHA256SUMS is not extracted" {
   echo "0000000000000000000000000000000000000000000000000000000000000000  ${TARBALL}" > "${RELEASE}/SHA256SUMS"
 

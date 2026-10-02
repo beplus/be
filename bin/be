@@ -688,15 +688,17 @@ function do_get() {
 
 #
 # Synopsis: display_sha256 file
-# sha256sum where it exists, otherwise shasum, which macOS has.
+# sha256sum where it exists, otherwise shasum, which macOS has. Both hash stdin rather than a
+# named file: given a name with a backslash in it, they escape it and put a backslash before the
+# hash.
 #
 
 function display_sha256() {
   local line
   if command -v sha256sum &> /dev/null; then
-    line="$(sha256sum "$1")"
+    line="$(sha256sum < "$1")"
   else
-    line="$(shasum -a 256 "$1")"
+    line="$(shasum -a 256 < "$1")"
   fi
   echo "${line%% *}"
 }
