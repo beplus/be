@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 BIN_DIRECTORY="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-# We want to cover curl and wget especially, gz and xz and variety of OS a bonus.
+# We want to cover curl and wget especially, and variety of OS a bonus.
 services=( ubuntu-wget ) # amazonlinux-curl  archlinux-curl ubuntu-curl
 
 cd "$(dirname "${BIN_DIRECTORY}")" || exit 2

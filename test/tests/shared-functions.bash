@@ -34,6 +34,57 @@ function setup_tmp_prefix() {
   export PATH="${BE_PREFIX}/bin:${PATH}"
 }
 
+
+# Create a local mirror laid out as the beplus CLI release publishes one, and point be at it:
+# v<version>/ holds this machine's tarball, with a stub beplus that prints the version banner,
+# and SHA256SUMS beside it. The mirror is a file:// URL, which be reads with curl only (wget
+# fetches http, https and ftp), so without curl the test is skipped.
+# Globals:
+#   TMP_MIRROR_DIR
+#   BE_MIRROR
+
+function setup_tmp_mirror() {
+  command -v curl > /dev/null || skip "the local mirror is a file:// URL, which needs curl"
+  local version="$1"
+  TMP_MIRROR_DIR="$(mktemp -d)"
+  [ -d "${TMP_MIRROR_DIR}" ] || exit 2
+  export TMP_MIRROR_DIR
+
+  local release="${TMP_MIRROR_DIR}/v${version}"
+  local tarball="beplus-cli-v${version}-$(tarball_platform).tar.gz"
+  mkdir -p "${release}" "${TMP_MIRROR_DIR}/stub"
+  printf '#!/bin/sh\necho "beplus CLI v%s"\n' "${version}" > "${TMP_MIRROR_DIR}/stub/beplus"
+  chmod +x "${TMP_MIRROR_DIR}/stub/beplus"
+  tar -czf "${release}/${tarball}" -C "${TMP_MIRROR_DIR}/stub" beplus
+  if command -v sha256sum &> /dev/null; then
+    (cd "${release}" && sha256sum "${tarball}" > SHA256SUMS)
+  else
+    (cd "${release}" && shasum -a 256 "${tarball}" > SHA256SUMS)
+  fi
+
+  export BE_MIRROR="file://${TMP_MIRROR_DIR}"
+}
+
+#
+# @todo Duplicate
+# Synopsis: tarball_platform
+# The platform in a release tarball's name, as be picks it for this machine.
+#
+
+function tarball_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Linux) os="linux" ;;
+    Darwin) os="macos" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64) arch="x64" ;;
+    aarch64 | armv8l) arch="arm64" ;;
+    *) arch="$(uname -m)" ;;
+  esac
+  echo "${os}-${arch}"
+}
+
 #
 # Synopsis: beplus --version | cli_version
 # The version a beplus binary reports, without the leading v. 2.x prints a banner whose first

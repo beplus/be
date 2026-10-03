@@ -36,3 +36,15 @@ function teardown() {
   output="$(find "${BE_PREFIX}" -not -type d)"
   assert_equal "$output" ""
 }
+
+
+@test "be uninstall at end of input deletes nothing" {
+  mkdir -p "${BE_PREFIX}/bin"
+  touch "${BE_PREFIX}/bin/beplus"
+
+  # It used to ask again for ever; head ends that loop rather than hang the suite.
+  run bash -c 'set -o pipefail; be uninstall < /dev/null | head -n 1'
+  assert_success
+  assert_output ""
+  [ -f "${BE_PREFIX}/bin/beplus" ]
+}

@@ -64,7 +64,7 @@ function n_grep() {
 # Setup and state
 #
 
-VERSION="v0.8.0"
+VERSION="v0.9.0"
 
 BE_PREFIX="${BE_PREFIX-/usr/local}"
 BE_PREFIX=${BE_PREFIX%/}
@@ -82,18 +82,6 @@ readonly BE_MIRROR
 BE_DOWNLOAD_MIRROR=${BE_DOWNLOAD_MIRROR:-https://github.com/beplus/cli/releases/download}
 BE_DOWNLOAD_MIRROR=${BE_DOWNLOAD_MIRROR%/}
 readonly BE_DOWNLOAD_MIRROR
-
-# Using xz instead of gzip is enabled by default, if xz compatibility checks pass.
-# User may set BE_USE_XZ to 0 to disable, or set to anything else to enable.
-# May also be overridden by command line flags.
-
-# Normalise external values to true/false
-if [[ "${BE_USE_XZ}" = "0" ]]; then
-  BE_USE_XZ="false"
-elif [[ -n "${BE_USE_XZ+defined}" ]]; then
-  BE_USE_XZ="true"
-fi
-# Not setting to readonly. Overriden by CLI flags, and update_xz_settings_for_version.
 
 BE_MAX_REMOTE_MATCHES=${BE_MAX_REMOTE_MATCHES:-20}
 
@@ -186,22 +174,6 @@ display_major_version() {
   version="${version#v}"
   version="${version%%.*}"
   echo "${version}"
-}
-
-#
-# Synopsis: update_xz_settings_for_version numeric-version
-# Globals modified:
-# - BE_USE_XZ
-#
-
-function update_xz_settings_for_version() {
-  # tarballs in xz format were available in later version of iojs, but KISS and only use xz from v4.
-  if [[ "${BE_USE_XZ}" = "true" ]]; then
-    local major_version="$(display_major_version "$1")"
-    if [[ "${major_version}" -lt 4 ]]; then
-      BE_USE_XZ="false"
-    fi
-  fi
 }
 
 #
@@ -327,7 +299,6 @@ Options:
   -a, --arch            Override system architecture
   --all                 ls-remote displays all matches instead of last 20
   --insecure            Turn off certificate checking for https requests (may be needed from behind a proxy server)
-  --use-xz/--no-use-xz  Override automatic detection of xz support and enable/disable use of xz compressed beplus CLI downloads.
 
 Aliases:
 
@@ -383,28 +354,23 @@ display_be_version() {
 
 #
 # Synopsis: set_active_beplus
-# Checks cached downloads for a binary matching the active beplus CLI.
+# Checks cached downloads for the one the installed beplus CLI was copied from: activate copies
+# <cache>/beplus/<version>/beplus to $BE_PREFIX/bin/beplus, so the two files are identical.
 # Globals modified:
 # - g_active_beplus
 #
 
 function set_active_beplus() {
   g_active_beplus=
-  local beplus_path="$(command -v beplus)"
-  if [[ -x "${beplus_path}" ]]; then
-    local installed_version=$(beplus --version)
-    installed_version=${installed_version#v}
-    for dir in "${CACHE_DIR}"/*/ ; do
-      local folder_name="${dir%/}"
-      folder_name="${folder_name##*/}"
-      if diff &> /dev/null \
-        "${CACHE_DIR}/${folder_name}/${installed_version}/bin/beplus" \
-        "${beplus_path}" ; then
-        g_active_beplus="${folder_name}/${installed_version}"
-        break
-      fi
-    done
-  fi
+  local cached
+  for cached in "${CACHE_DIR}"/*/*/beplus; do
+    # cmp stops at the first difference; diff may read both binaries (~110 MB each) whole.
+    if cmp -s "${cached}" "${BE_PREFIX}/bin/beplus"; then
+      cached="${cached#"${CACHE_DIR}/"}"
+      g_active_beplus="${cached%/beplus}"
+      break
+    fi
+  done
 }
 
 #
@@ -638,17 +604,9 @@ install() {
   get_latest_resolved_version "$1" || return 2
   version="${g_target_beplus}"
   [[ -n "${version}" ]] || abort "no version found for '$1'"
-  update_xz_settings_for_version "${version}"
   update_arch_settings_for_version "${version}"
 
   local dir="${CACHE_DIR}/${g_mirror_folder_name}/${version}"
-
-  # Note: decompression flags ignored with default Darwin tar which autodetects.
-  if test "$BE_USE_XZ" = "true"; then
-    local tarflag="-Jx"
-  else
-    local tarflag="-zx"
-  fi
 
   if test -d "$dir"; then
     if [[ ! -e "$dir/be.lock" ]] ; then
@@ -664,6 +622,15 @@ install() {
   local url="$(tarball_url "$version")"
   is_ok "${url}" || abort "download preflight failed for '$version' (${url})"
 
+  # The release publishes SHA256SUMS beside its tarballs. Read this tarball's line before
+  # downloading it, and extract only a download that matches it. 2.x lists `<hash>  <name>`, as
+  # sha256sum writes it; v1.0.5 lists `<name>: <hash>`.
+  local sums_url="${url%/*}/SHA256SUMS"
+  local sums
+  sums="$(do_get_index "${sums_url}")" || abort "failed to download SHA256SUMS for $version (${sums_url})"
+  local checksum="$(echo "${sums}" | awk -v name="${url##*/}" '$2 == name { print $1; exit } $1 == name ":" { print $2; exit }')"
+  [[ -n "${checksum}" ]] || abort "no checksum for ${url##*/} in ${sums_url}"
+
   log mkdir "$dir"
   mkdir -p "$dir" || abort "sudo required (or change ownership, or define BE_PREFIX)"
   touch "$dir/be.lock"
@@ -671,15 +638,21 @@ install() {
   cd "${dir}" || abort "Failed to cd to ${dir}"
 
   log fetch "$url"
-  do_get "${url}" | tar "$tarflag" --no-same-owner -f - # --strip-components=1
-  pipe_results=( "${PIPESTATUS[@]}" )
-  if [[ "${pipe_results[0]}" -ne 0 ]]; then
+  local archive="${dir}/${url##*/}"
+  if ! do_get "${url}" > "${archive}"; then
+    rm -f "${archive}"
     abort "failed to download archive for $version"
   fi
-  if [[ "${pipe_results[1]}" -ne 0 ]]; then
-    abort "failed to extract archive for $version"
-  fi
   [ "$GET_SHOWS_PROGRESS" = "true" ] && erase_line
+  local download_checksum="$(display_sha256 "${archive}")"
+  if [[ "${download_checksum}" != "${checksum}" ]]; then
+    rm -f "${archive}"
+    abort "checksum mismatch for ${url}: ${sums_url} lists ${checksum}, the download is ${download_checksum}"
+  fi
+  tar -zx --no-same-owner -f "${archive}" # --strip-components=1
+  local tar_status=$?
+  rm -f "${archive}"
+  [[ "${tar_status}" -eq 0 ]] || abort "failed to extract archive for $version"
   rm -f "$dir/be.lock"
 
   disable_pax_mprotect bin/beplus
@@ -711,6 +684,23 @@ function do_get() {
   else
     abort "curl or wget command required"
   fi
+}
+
+#
+# Synopsis: display_sha256 file
+# sha256sum where it exists, otherwise shasum, which macOS has. Both hash stdin rather than a
+# named file: given a name with a backslash in it, they escape it and put a backslash before the
+# hash.
+#
+
+function display_sha256() {
+  local line
+  if command -v sha256sum &> /dev/null; then
+    line="$(sha256sum < "$1")"
+  else
+    line="$(shasum -a 256 < "$1")"
+  fi
+  echo "${line%% *}"
 }
 
 #
@@ -837,30 +827,6 @@ function is_ok() {
 }
 
 #
-# Synopsis: can_use_xz
-# Test system to see if xz decompression is supported by tar.
-#
-
-function can_use_xz() {
-  # Be conservative and only enable if xz is likely to work. Unfortunately we can't directly query tar itself.
-  # For research, see https://github.com/shadowspawn/nvh/issues/8
-  local uname_s="$(uname -s)"
-  if [[ "${uname_s}" = "Linux" ]] && command -v xz &> /dev/null ; then
-    # tar on linux is likely to support xz if it is available as a command
-    return 0
-  elif [[ "${uname_s}" = "Darwin" ]]; then
-    local macos_version="$(sw_vers -productVersion)"
-    local macos_major_version="$(echo "${macos_version}" | cut -d '.' -f 1)"
-    local macos_minor_version="$(echo "${macos_version}" | cut -d '.' -f 2)"
-    if [[ "${macos_major_version}" -gt 10 || "${macos_minor_version}" -gt 8 ]]; then
-      # tar on recent Darwin has xz support built-in
-      return 0
-    fi
-  fi
-  return 2 # not supported
-}
-
-#
 # Synopsis: display_tarball_platform
 #
 
@@ -926,10 +892,8 @@ function tarball_url() {
   # Artifact version (filename MUST NOT contain +suffix)
   local artifact_version="${version%%+*}"
 
-  local ext="gz"
-  [ "$BE_USE_XZ" = "true" ] && ext="xz"
-
-  echo "${g_mirror_url}/v${url_version}/beplus-cli-v${artifact_version}-$(display_tarball_platform).tar.${ext}"
+  # The beplus CLI release publishes .tar.gz only.
+  echo "${g_mirror_url}/v${url_version}/beplus-cli-v${artifact_version}-$(display_tarball_platform).tar.gz"
 }
 
 #
@@ -1217,7 +1181,8 @@ function delete_with_echo() {
 
 uninstall_installed() {
   while true; do
-      read -r -p "Do you wish to delete beplus CLI from ${BE_PREFIX}? " yn
+      # End of input answers no.
+      read -r -p "Do you wish to delete beplus CLI from ${BE_PREFIX}? " yn || yn="n"
       case $yn in
           [Yy]* ) break ;;
           [Nn]* ) exit ;;
@@ -1432,8 +1397,6 @@ while [[ $# -ne 0 ]]; do
     -q|--quiet) set_quiet ;;
     -d|--download) DOWNLOAD="true" ;;
     --insecure) set_insecure ;;
-    --use-xz) BE_USE_XZ="true" ;;
-    --no-use-xz) BE_USE_XZ="false" ;;
     --latest) display_remote_versions latest; exit ;;
     --stable) display_remote_versions latest; exit ;;
     -a|--arch) shift; set_arch "$1";; # set arch and continue
@@ -1451,11 +1414,6 @@ while [[ $# -ne 0 ]]; do
   esac
   shift
 done
-
-if [[ -z "${BE_USE_XZ+defined}" ]]; then
-  BE_USE_XZ="true" # Default to using xz
-  can_use_xz || BE_USE_XZ="false"
-fi
 
 set -- "${unprocessed_args[@]}"
 
