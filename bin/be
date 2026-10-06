@@ -278,6 +278,7 @@ Commands:
 
   be                              Display downloaded beplus CLI versions and install selection
   be latest                       Install the latest beplus CLI release (downloading if necessary)
+  be auto                         Install the beplus CLI version the nearest beplus.estate.json pins
   be <version>                    Install beplus CLI <version> (downloading if necessary)
   be install <version>            Install beplus CLI <version> (downloading if necessary)
   be run <version> [args ...]     Execute downloaded beplus CLI <version> with [args ...]
@@ -316,7 +317,8 @@ Versions:
 
     0.17.0, 1, v1.2   Numeric versions
     latest, current   Newest official release
-    auto              Read version from file: .bepluscloud, .beplus-version, or package.json
+    auto              The exact version pinned as "cli": { "version": "x.y.z" } in the nearest
+                      beplus.estate.json (in the current directory or above it); fails without one
 
 EOF
 }
@@ -897,138 +899,109 @@ function tarball_url() {
 }
 
 #
-# Synopsis: get_file_node_version filename
-# Sets g_target_beplus
+# Synopsis: display_estate_manifest_path
+# Output the path of the nearest beplus.estate.json: in PWD, or else in the closest directory above
+# it. Fails when there is none.
 #
 
-function get_file_node_version() {
-  g_target_beplus=
-  local filepath="$1"
-  verbose_log "found" "${filepath}"
-  # read returns a non-zero status but does still work if there is no line ending
-  local version
-  <"${filepath}" read -r version
-  # trim possible trailing \d from a Windows created file
-  version="${version%%[[:space:]]}"
-  verbose_log "read" "${version}"
-  g_target_beplus="${version}"
-}
-
-#
-# Synopsis: get_package_engine_version\
-# Sets g_target_beplus
-#
-
-function get_package_engine_version() {
-  g_target_beplus=
-  local filepath="$1"
-  verbose_log "found" "${filepath}"
-  command -v node &> /dev/null || abort "an active version of node is required to read 'engines' from package.json"
-  local range
-  range="$(node -e "package = require('${filepath}'); if (package && package.engines && package.engines.node) console.log(package.engines.node)")"
-  verbose_log "read" "${range}"
-  [[ -n "${range}" ]] || return 2
-  if [[ "*" == "${range}" ]]; then
-    verbose_log "target" "current"
-    g_target_beplus="current"
-    return
-  fi
-
-  local version
-  if [[ "${range}" =~ ^([>~^=]|\>\=)?v?([0-9]+(\.[0-9]+){0,2})(.[xX*])?$ ]]; then
-    local operator="${BASH_REMATCH[1]}"
-    version="${BASH_REMATCH[2]}"
-    case "${operator}" in
-      '' | =) ;;
-      \> | \>=) version="current" ;;
-      \~) [[ "${version}" =~ ^([0-9]+\.[0-9]+)\.[0-9]+$ ]] && version="${BASH_REMATCH[1]}" ;;
-      ^) [[ "${version}" =~ ^([0-9]+) ]] && version="${BASH_REMATCH[1]}" ;;
-    esac
-    verbose_log "target" "${version}"
-  else
-    command -v npx &> /dev/null || abort "an active version of npx is required to use complex 'engine' ranges from package.json"
-    verbose_log "resolving" "${range}"
-    local version_per_line="$(be lsr --all)"
-    local versions_one_line=$(echo "${version_per_line}" | tr '\n' ' ')
-    # Using semver@7 so works with older versions of node.
-    # shellcheck disable=SC2086
-    version=$(npm_config_yes=true npx --quiet semver@7 -r "${range}" ${versions_one_line} | tail -n 1)
-  fi
-  g_target_beplus="${version}"
-}
-
-#
-# Synopsis: get_nvmrc_version
-# Sets g_target_beplus
-#
-
-function get_nvmrc_version() {
-  g_target_beplus=
-  local filepath="$1"
-  verbose_log "found" "${filepath}"
-  local version
-  <"${filepath}" read -r version
-  verbose_log "read" "${version}"
-  # Translate from nvm aliases
-  case "${version}" in
-    lts/\*) version="lts" ;;
-    lts/*) version="${version:4}" ;;
-    node) version="current" ;;
-    *) ;;
-  esac
-  g_target_beplus="${version}"
-}
-
-#
-# Synopsis: get_engine_version [error-message]
-# Sets g_target_beplus
-#
-
-function get_engine_version() {
-  g_target_beplus=
-  local error_message="${1-package.json not found}"
-  local parent
-  parent="${PWD}"
-  while [[ -n "${parent}" ]]; do
-    if [[ -e "${parent}/package.json" ]]; then
-      get_package_engine_version "${parent}/package.json"
-    else
-      parent=${parent%/*}
-      continue
+function display_estate_manifest_path() {
+  local dir="${PWD}"
+  while true; do
+    if [[ -f "${dir%/}/beplus.estate.json" ]]; then
+      echo "${dir%/}/beplus.estate.json"
+      return 0
     fi
-    break
+    [[ -z "${dir}" || "${dir}" == "/" ]] && return 1
+    dir="${dir%/*}"
   done
-  [[ -n "${parent}" ]] || abort "${error_message}"
-  [[ -n "${g_target_beplus}" ]] || abort "did not find supported version of node in 'engines' field of package.json"
+}
+
+#
+# Synopsis: display_estate_cli_version node|jq manifest
+# Output the manifest's "cli": { "version" } as JSON, on one line: a string when the pin is one,
+# null when the manifest has none. Fails, with the reason on stderr, when the file is not exactly
+# one JSON value.
+#
+
+function display_estate_cli_version() {
+  if [[ "$1" == "node" ]]; then
+    node -e '
+      const has = (value, key) =>
+        value !== null && typeof value === "object" && !Array.isArray(value)
+        && Object.prototype.hasOwnProperty.call(value, key);
+      let manifest;
+      try {
+        manifest = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      } catch (error) {
+        console.error(error.message);
+        process.exit(1);
+      }
+      const version = has(manifest, "cli") && has(manifest.cli, "version") ? manifest.cli.version : null;
+      console.log(JSON.stringify(version));
+    ' "$2"
+  else
+    # --slurp so that an empty file, or one holding several values, fails as JSON.parse does.
+    jq -r --slurp '
+      if length != 1 then error("expected one JSON value, found \(length)")
+      else .[0]
+        | if type == "object" and (.cli | type) == "object" and (.cli | has("version"))
+          then .cli.version
+          else null
+          end
+        | tojson
+      end
+    ' "$2"
+  fi
 }
 
 #
 # Synopsis: get_auto_version
+# Resolve auto to the beplus CLI version the nearest beplus.estate.json pins as
+# "cli": { "version": "x.y.z" }. The pin must be one exact version (a leading v and a pre-release
+# are allowed, as everywhere in be); a missing, floating or unreadable pin aborts, naming the file,
+# rather than falling back to another version. The nearest manifest decides, even when it pins
+# nothing: one further up is never consulted.
 # Sets g_target_beplus
 #
 
-# @todo
 function get_auto_version() {
   g_target_beplus=
-  # Search for a version control file first
-  local parent
-  parent="${PWD}"
-  while [[ -n "${parent}" ]]; do
-    if [[ -e "${parent}/.n-node-version" ]]; then
-      get_file_node_version "${parent}/.n-node-version"
-    elif [[ -e "${parent}/.node-version" ]]; then
-      get_file_node_version "${parent}/.node-version"
-    elif [[ -e "${parent}/.nvmrc" ]]; then
-      get_nvmrc_version "${parent}/.nvmrc"
-    else
-      parent=${parent%/*}
-      continue
-    fi
-    break
-  done
-  # Fallback to package.json
-  [[ -n "${parent}" ]] || get_engine_version "no file found for auto version (.n-node-version, .node-version, .nvmrc, or package.json)"
-  [[ -n "${g_target_beplus}" ]] || abort "file found for auto did not contain target version of node"
+  local manifest
+  manifest="$(display_estate_manifest_path)" \
+    || abort "auto found no beplus.estate.json in ${PWD} or above it, so no beplus CLI version is pinned"
+  verbose_log "found" "${manifest}"
+
+  # node is on every deploy path; jq is what be's remote lookups use.
+  local reader
+  if command -v node &> /dev/null; then
+    reader="node"
+  elif command -v jq &> /dev/null; then
+    reader="jq"
+  else
+    abort "reading the beplus CLI pin from ${manifest} needs node or jq, and neither is on PATH"
+  fi
+
+  local value
+  if ! value="$(display_estate_cli_version "${reader}" "${manifest}" 2> /dev/null)"; then
+    abort "${manifest} could not be read as JSON by ${reader}: $(display_estate_cli_version "${reader}" "${manifest}" 2>&1 > /dev/null)"
+  fi
+
+  local version
+  case "${value}" in
+    null)
+      abort "${manifest} pins no beplus CLI version; add \"cli\": { \"version\": \"x.y.z\" }" ;;
+    \"*\")
+      version="${value#\"}"
+      version="${version%\"}"
+      ;;
+    *)
+      abort "\"cli\": { \"version\" } in ${manifest} is ${value}, not a version string like \"2.11.0\"" ;;
+  esac
+  verbose_log "read" "${version}"
+
+  is_exact_numeric_version "${version}" \
+    || abort "\"cli\": { \"version\" } in ${manifest} is \"${version}\", not one exact version like \"2.11.0\""
+  g_target_beplus="${version#v}"
 }
 
 #
@@ -1039,6 +1012,12 @@ function get_auto_version() {
 function get_latest_resolved_version() {
   g_target_beplus=
   local version=${1}
+  if [[ "${version}" == "auto" ]]; then
+    # The pin is one exact version, so there is nothing to look up: auto installs exactly that
+    # version or fails, and never reads the release index (where "newest" lives).
+    get_auto_version
+    return
+  fi
   simple_version=${version}
   if is_exact_numeric_version "${simple_version}"; then
     # Just numbers, already resolved, no need to lookup first.
