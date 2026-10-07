@@ -36,31 +36,34 @@ function setup_tmp_prefix() {
 
 
 # Create a local mirror laid out as the beplus CLI release publishes one, and point be at it:
-# v<version>/ holds this machine's tarball, with a stub beplus that prints the version banner,
-# and SHA256SUMS beside it. The mirror is a file:// URL, which be reads with curl only (wget
-# fetches http, https and ftp), so without curl the test is skipped.
+# for each <version> given, v<version>/ holds this machine's tarball, with a stub beplus that
+# prints the version banner, and SHA256SUMS beside it. The mirror is a file:// URL, which be reads
+# with curl only (wget fetches http, https and ftp), so without curl the test is skipped.
+# Usage: setup_tmp_mirror version...
 # Globals:
 #   TMP_MIRROR_DIR
 #   BE_MIRROR
 
 function setup_tmp_mirror() {
   command -v curl > /dev/null || skip "the local mirror is a file:// URL, which needs curl"
-  local version="$1"
   TMP_MIRROR_DIR="$(mktemp -d)"
   [ -d "${TMP_MIRROR_DIR}" ] || exit 2
   export TMP_MIRROR_DIR
 
-  local release="${TMP_MIRROR_DIR}/v${version}"
-  local tarball="beplus-cli-v${version}-$(tarball_platform).tar.gz"
-  mkdir -p "${release}" "${TMP_MIRROR_DIR}/stub"
-  printf '#!/bin/sh\necho "beplus CLI v%s"\n' "${version}" > "${TMP_MIRROR_DIR}/stub/beplus"
-  chmod +x "${TMP_MIRROR_DIR}/stub/beplus"
-  tar -czf "${release}/${tarball}" -C "${TMP_MIRROR_DIR}/stub" beplus
-  if command -v sha256sum &> /dev/null; then
-    (cd "${release}" && sha256sum "${tarball}" > SHA256SUMS)
-  else
-    (cd "${release}" && shasum -a 256 "${tarball}" > SHA256SUMS)
-  fi
+  local version
+  for version in "$@"; do
+    local release="${TMP_MIRROR_DIR}/v${version}"
+    local tarball="beplus-cli-v${version}-$(tarball_platform).tar.gz"
+    mkdir -p "${release}" "${TMP_MIRROR_DIR}/stub"
+    printf '#!/bin/sh\necho "beplus CLI v%s"\n' "${version}" > "${TMP_MIRROR_DIR}/stub/beplus"
+    chmod +x "${TMP_MIRROR_DIR}/stub/beplus"
+    tar -czf "${release}/${tarball}" -C "${TMP_MIRROR_DIR}/stub" beplus
+    if command -v sha256sum &> /dev/null; then
+      (cd "${release}" && sha256sum "${tarball}" > SHA256SUMS)
+    else
+      (cd "${release}" && shasum -a 256 "${tarball}" > SHA256SUMS)
+    fi
+  done
 
   export BE_MIRROR="file://${TMP_MIRROR_DIR}"
 }

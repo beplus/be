@@ -9,7 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.9.0...main
+https://github.com/beplus/be/compare/v0.10.0...main
+
+## [v0.10.0] (10/07/2026)
+
+Make `be auto` install exactly the beplus CLI version the repository pins, so that a CLI release
+cannot change what a deploy runs without a commit in that repository. `auto` reads
+`"cli": { "version": "x.y.z" }` from the nearest `beplus.estate.json`, in the current directory or
+the closest one above it, and installs that version without consulting the release index. No
+manifest, a manifest without a pin, a pin that is not one exact version (`2`, `2.11`, `latest`,
+`^2.11.0`) or a file that is not valid JSON fails with a message naming the file; nothing falls
+back to the newest release, and a manifest further up never stands in for the nearest one. A
+leading `v` and pre-releases are accepted, as everywhere in `be`. The manifest is read with `node`,
+or with `jq` where there is no `node`. `be ls-remote auto`, `be which auto`, `be run auto` and
+`be exec auto` resolve the same pin.
+
+`auto` no longer reads `.n-node-version`, `.node-version`, `.nvmrc` or `engines.node` in
+`package.json`, which it inherited from `n` and which name Node.js versions, not beplus CLI ones.
+The help text promised `.bepluscloud`, `.beplus-version` and `package.json`; none of them was ever
+read, and `beplus.estate.json` is now the only place a repository pins its CLI.
 
 ## [v0.9.0] (10/02/2026)
 
