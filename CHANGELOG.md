@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.9.0...main
+https://github.com/beplus/be/compare/v0.10.0...main
+
+## [v0.10.0] (10/07/2026)
 
 Make `be auto` install exactly the beplus CLI version the repository pins, so that a CLI release
 cannot change what a deploy runs without a commit in that repository. `auto` reads
