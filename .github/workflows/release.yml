@@ -36,6 +36,9 @@ concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
+# Job names use the github context only: GitHub does not evaluate `needs.*` in the name of a job
+# it skips, so a name built from the plan's tag showed as "${{ … }}" on every other branch's run.
+# The version is in each job's summary.
 jobs:
   ci:
     name: CI
@@ -67,7 +70,7 @@ jobs:
           GITHUB_PACKAGES_TOKEN: ${{ github.token }}
 
   dev:
-    name: Release ${{ needs.plan.outputs.tag }} on dev
+    name: Release on dev
     needs: plan
     if: github.ref_name == 'dev'
     runs-on: ubuntu-latest
@@ -148,7 +151,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
   promote:
-    name: Promote ${{ needs.plan.outputs.tag }} to ${{ github.ref_name }}
+    name: Promote to ${{ github.ref_name }}
     needs: plan
     if: github.ref_name == 'stage' || github.ref_name == 'prod'
     runs-on: ubuntu-latest
@@ -224,7 +227,7 @@ jobs:
   # main only: the public registry. Its own job because npm's trusted publisher is bound to the
   # `npm` environment, whose deployment branch is main.
   public:
-    name: Publish ${{ needs.plan.outputs.tag }} to npm
+    name: Publish to npm
     needs: plan
     if: github.ref_name == 'main'
     runs-on: ubuntu-latest
