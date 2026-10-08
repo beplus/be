@@ -1,24 +1,39 @@
 name: Release
 
-# A merge into main that bumped the version publishes it to public npm, tags it with a GitHub
-# Release, and mirrors it to GitHub Packages, as every @beplus/* repository does; any other merge
-# finds nothing to do. Every step checks what is already done, so re-running a failed run is safe.
-# See docs/releasing.md.
+# One version per commit, built once, promoted — the model every @beplus library follows
+# (beplus/setup-beplus's library-publish.yml), for a package that is one bash script and no Rush:
 #
-# npm trusts this file by name (Trusted Publisher: beplus/be, release.yml, environment npm), so
-# there is no npm token anywhere: the publish job authenticates with its OIDC token. GitHub Packages
-# takes the workflow's own GITHUB_TOKEN.
+#   dev    A push that carries a new version packs it ONCE, tags it vX.Y.Z with a GitHub
+#          pre-release, and publishes that tarball to GitHub Packages (dist-tag `dev`), then to
+#          dev's CodeArtifact — npm.beplus.cloud, where the estates' builds install `be` from.
+#   stage  Builds nothing: fetches the tarball dev published from GitHub Packages and publishes it
+#          byte for byte to stage's CodeArtifact. GitHub Packages tags it `stage`.
+#   prod   The same into prod's CodeArtifact (GitHub Packages tags it `latest`), and the GitHub
+#          Release becomes a full release, marked latest.
+#   main   The public channel, and the one thing `be` has that the libraries do not: the same
+#          bytes to the public npm registry (trusted publishing, with provenance).
+#
+# stage, prod and main are fast-forwarded (dev → stage → prod → main), never committed to; a
+# version GitHub Packages does not have is one dev never released, and is refused there, and main
+# publishes only what prod already has. Every step checks what is already done,
+# so re-running a failed run is safe. See docs/releasing.md.
+#
+# Each environment's job assumes github-actions-beplus-be-<env>-npm-publishing in the account its
+# GitHub environment names (vars.BE_AWS_ACCOUNT_ID) — the role name library-publish derives — and
+# `beplus aws codeartifact auth --env <env>` picks that environment's CodeArtifact repository.
+# npm trusts this file by name (Trusted Publisher: beplus/be, release.yml, environment npm), so no
+# npm token exists anywhere. GitHub Packages takes the workflow's own GITHUB_TOKEN.
 
 on:
   push:
-    branches: [main]
+    branches: [dev, stage, prod, main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -29,7 +44,7 @@ jobs:
   plan:
     name: Plan
     needs: ci
-    if: github.ref == 'refs/heads/main'
+    if: contains(fromJSON('["dev", "stage", "prod", "main"]'), github.ref_name)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,25 +54,189 @@ jobs:
       tag: ${{ steps.verify.outputs.tag }}
       dist_tag: ${{ steps.verify.outputs.dist_tag }}
       source_sha: ${{ steps.verify.outputs.source_sha }}
-      need_publish: ${{ steps.verify.outputs.need_publish }}
       need_release: ${{ steps.verify.outputs.need_release }}
       need_github_packages: ${{ steps.verify.outputs.need_github_packages }}
+      need_npm: ${{ steps.verify.outputs.need_npm }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # main publishes only what prod has: HEAD must be on origin/prod
       - id: verify
-        run: scripts/release/verify-version.sh release
+        run: scripts/release/verify-version.sh release "${GITHUB_REF_NAME}"
         env:
           GITHUB_PACKAGES_TOKEN: ${{ github.token }}
 
-  publish:
-    name: Publish ${{ needs.plan.outputs.tag }}
+  dev:
+    name: Release ${{ needs.plan.outputs.tag }} on dev
     needs: plan
-    if: needs.plan.outputs.need_publish == 'true' || needs.plan.outputs.need_release == 'true'
+    if: github.ref_name == 'dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: write # the tag and the GitHub pre-release
+      packages: write # GitHub Packages
+      id-token: write # the CodeArtifact role
+    env:
+      BE_ENVIRONMENT: ${{ vars.BE_ENVIRONMENT }}
+      BE_AWS_ACCOUNT_ID: ${{ vars.BE_AWS_ACCOUNT_ID }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
+      SOURCE_SHA: ${{ needs.plan.outputs.source_sha }}
+    steps:
+      # The commit the version was cut from, which is its tag once it has one: a later push that
+      # bumps nothing still publishes exactly what was released.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.source_sha }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check the prerequisites
+        run: scripts/release/check-environment.sh dev
+
+      - name: Pack it once
+        run: |
+          mkdir -p npm
+          npm pack --pack-destination npm
+          ls -l npm
+
+      - name: Tag it and create the GitHub pre-release
+        if: needs.plan.outputs.need_release == 'true'
+        run: |
+          scripts/release/changelog-notes.sh "${TAG}" > "${RUNNER_TEMP}/notes.md"
+          gh release create "${TAG}" --target "${SOURCE_SHA}" --title "${TAG}" \
+            --notes-file "${RUNNER_TEMP}/notes.md" --prerelease --latest=false
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # publishConfig pins the @beplus scope to npmjs, and only command-line flags outrank it, so
+      # every publish names its registry on the command line; the token stays in the environment.
+      - name: Publish to GitHub Packages
+        if: needs.plan.outputs.need_github_packages == 'true'
+        run: |
+          echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "${RUNNER_TEMP}/.npmrc-github"
+          # `./`: to npm, a bare `npm/<file>.tgz` is a GitHub `owner/repo` shorthand.
+          npm publish ./npm/*.tgz --userconfig "${RUNNER_TEMP}/.npmrc-github" \
+            --registry=https://npm.pkg.github.com/ --@beplus:registry=https://npm.pkg.github.com/ \
+            --tag dev
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.BE_AWS_ACCOUNT_ID }}:role/github-actions-beplus-${{ github.event.repository.name }}-${{ github.ref_name }}-npm-publishing
+          aws-region: us-east-1
+
+      - uses: beplus/setup-beplus/cli@v2
+        with:
+          BE_CLI_VERSION: ${{ vars.BE_CLI_VERSION }}
+
+      - name: Publish to CodeArtifact
+        run: scripts/release/publish-codeartifact.sh ./npm/*.tgz
+
+      - name: Summary
+        run: |
+          {
+            echo "### Released ${TAG} on dev"
+            echo
+            echo "- GitHub (pre-release): ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+            echo "- GitHub Packages: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pkgs/npm/be (dist-tag \`dev\`)"
+            echo "- dev's CodeArtifact (npm.beplus.cloud): dist-tag \`${DIST_TAG}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  promote:
+    name: Promote ${{ needs.plan.outputs.tag }} to ${{ github.ref_name }}
+    needs: plan
+    if: github.ref_name == 'stage' || github.ref_name == 'prod'
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+    permissions:
+      contents: write # prod: the GitHub Release becomes a full release
+      packages: write # the stage/latest dist-tag in GitHub Packages
+      id-token: write # the CodeArtifact role
+    env:
+      BE_ENVIRONMENT: ${{ vars.BE_ENVIRONMENT }}
+      BE_AWS_ACCOUNT_ID: ${{ vars.BE_AWS_ACCOUNT_ID }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check the prerequisites
+        run: scripts/release/check-environment.sh "${GITHUB_REF_NAME}"
+
+      - name: Fetch it from GitHub Packages
+        run: scripts/release/fetch-github-packages.sh "${VERSION}" npm
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.BE_AWS_ACCOUNT_ID }}:role/github-actions-beplus-${{ github.event.repository.name }}-${{ github.ref_name }}-npm-publishing
+          aws-region: us-east-1
+
+      - uses: beplus/setup-beplus/cli@v2
+        with:
+          BE_CLI_VERSION: ${{ vars.BE_CLI_VERSION }}
+
+      - name: Publish to CodeArtifact
+        run: scripts/release/publish-codeartifact.sh ./npm/*.tgz
+
+      # How far a version got, in the one registry every environment shares: `stage`, and prod's
+      # `latest`. A registry that refuses a tag warns rather than stopping a promotion.
+      - name: Tag it in GitHub Packages
+        continue-on-error: true
+        run: |
+          echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "${RUNNER_TEMP}/.npmrc-github"
+          npm dist-tag add "@beplus/be@${VERSION}" "${PROMOTED_TAG}" \
+            --userconfig "${RUNNER_TEMP}/.npmrc-github" --@beplus:registry=https://npm.pkg.github.com/ \
+            || echo "::warning::GitHub Packages did not tag @beplus/be@${VERSION} ${PROMOTED_TAG}."
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          PROMOTED_TAG: ${{ github.ref_name == 'prod' && 'latest' || github.ref_name }}
+
+      - name: Make the GitHub release a full release
+        if: github.ref_name == 'prod'
+        run: |
+          if [[ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" == "true" ]]; then
+            if [[ "${DIST_TAG}" == "latest" ]]; then latest=(--latest); else latest=(--latest=false); fi
+            gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --prerelease=false "${latest[@]}"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Promoted ${TAG} to ${GITHUB_REF_NAME}"
+            echo
+            echo "- ${GITHUB_REF_NAME}'s CodeArtifact: dist-tag \`${DIST_TAG}\`, the bytes dev published"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  # main only: the public registry. Its own job because npm's trusted publisher is bound to the
+  # `npm` environment, whose deployment branch is main.
+  public:
+    name: Publish ${{ needs.plan.outputs.tag }} to npm
+    needs: plan
+    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     environment: npm
     permissions:
-      contents: write # tag + GitHub Release
+      contents: read
+      packages: read # the tarball, from GitHub Packages
       id-token: write # npm trusted publishing and provenance
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
     steps:
       - uses: actions/checkout@v7
 
@@ -67,6 +246,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Make sure npm can publish with OIDC (>= 11.5.1)
+        if: needs.plan.outputs.need_npm == 'true'
         run: |
           if ! node -e '
             const [a, b, c] = process.argv[1].split(".").map(Number);
@@ -76,27 +256,17 @@ jobs:
           fi
           npm --version
 
-      - name: Publish to npm
-        if: needs.plan.outputs.need_publish == 'true'
-        run: npm publish --provenance --tag "${DIST_TAG}"
+      - name: Fetch it from GitHub Packages
+        if: needs.plan.outputs.need_npm == 'true'
+        run: scripts/release/fetch-github-packages.sh "${VERSION}" npm
         env:
-          DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
+          NODE_AUTH_TOKEN: ${{ github.token }}
 
-      - name: Tag and create the GitHub Release
-        if: needs.plan.outputs.need_release == 'true'
+      - name: Publish to npm
+        if: needs.plan.outputs.need_npm == 'true'
         run: |
-          scripts/release/changelog-notes.sh "${TAG}" > "${RUNNER_TEMP}/notes.md"
-          if [[ "${DIST_TAG}" == "latest" ]]; then
-            channel=(--latest)
-          else
-            channel=(--prerelease --latest=false)
-          fi
-          gh release create "${TAG}" --target "${GITHUB_SHA}" --title "${TAG}" \
-            --notes-file "${RUNNER_TEMP}/notes.md" "${channel[@]}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
-          DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
+          npm publish ./npm/*.tgz --provenance --tag "${DIST_TAG}" \
+            --registry=https://registry.npmjs.org/ --@beplus:registry=https://registry.npmjs.org/
 
       - name: Summary
         run: |
@@ -106,52 +276,3 @@ jobs:
             echo "- npm: https://www.npmjs.com/package/@beplus/be/v/${VERSION}"
             echo "- GitHub: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
           } >> "${GITHUB_STEP_SUMMARY}"
-        env:
-          TAG: ${{ needs.plan.outputs.tag }}
-          VERSION: ${{ needs.plan.outputs.version }}
-
-  github-packages:
-    name: GitHub Packages ${{ needs.plan.outputs.tag }}
-    needs: [plan, publish]
-    # After npm, so the mirror never has a version npm refused; also when there was nothing left to
-    # do on npm (publish skipped), which is how a version missing only here gets published.
-    if: >-
-      always() && needs.plan.result == 'success'
-      && needs.plan.outputs.need_github_packages == 'true'
-      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      # The commit the version was cut from, which is its tag once it has one: a later merge that
-      # bumps nothing still publishes exactly what npm has.
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.plan.outputs.source_sha }}
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-
-      # publishConfig pins the @beplus scope to npmjs, and only command-line flags outrank it, so
-      # the .npmrc carries just the token, read from the environment rather than written to disk.
-      - name: Publish to GitHub Packages
-        run: |
-          echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "${RUNNER_TEMP}/.npmrc-github"
-          npm publish --userconfig "${RUNNER_TEMP}/.npmrc-github" \
-            --registry=https://npm.pkg.github.com/ --@beplus:registry=https://npm.pkg.github.com/ \
-            --tag "${DIST_TAG}"
-        env:
-          NODE_AUTH_TOKEN: ${{ github.token }}
-          DIST_TAG: ${{ needs.plan.outputs.dist_tag }}
-
-      - name: Summary
-        run: |
-          {
-            echo "### Mirrored ${TAG} to GitHub Packages"
-            echo
-            echo "- ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pkgs/npm/be"
-          } >> "${GITHUB_STEP_SUMMARY}"
-        env:
-          TAG: ${{ needs.plan.outputs.tag }}

@@ -9,7 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.10.0...main
+https://github.com/beplus/be/compare/v0.11.0...dev
+
+## [v0.11.0] (10/08/2026)
+
+`@beplus/be` now releases the way every `@beplus/*` library does: one version per commit, built
+once, promoted. A merge into `dev` that bumps the version tags it with a GitHub pre-release and
+publishes the tarball to GitHub Packages and then to dev's CodeArtifact, `npm.beplus.cloud`, where
+the estates' builds install `be` from. That registry had served 0.7.0 as `latest` since July,
+because nothing published `be` there; a release that installed `be` after `beplus npm auth` got
+0.7.0's `be auto`, which picks a Node version, and failed. Fast-forwarding `stage` publishes the
+same bytes to stage's CodeArtifact. Fast-forwarding `prod` publishes them to prod's CodeArtifact
+and turns the GitHub Release into a full release. Fast-forwarding `main`, the public channel,
+publishes them to the public npm registry. `dev` is the default branch, and `scripts/install.sh`
+installs from `main`. `bin/be` itself is unchanged. See docs/releasing.md.
 
 ## [v0.10.0] (10/07/2026)
 

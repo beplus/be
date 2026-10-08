@@ -29,10 +29,12 @@ if [[ "$CI_MODE" == "0" ]]; then
   } >> "$ZSHRC"
 fi
 
+# main is the public channel, what the public npm registry has: dev runs ahead of every release,
+# and main is fast-forwarded from prod. The clone names it, because dev is the default branch.
 if [ -d "$BE_TOOLS_SRC_DIR/be/.git" ]; then
   git -C "$BE_TOOLS_SRC_DIR/be" pull origin main
 else
-  git clone https://github.com/beplus/be "$BE_TOOLS_SRC_DIR/be"
+  git clone --branch main https://github.com/beplus/be "$BE_TOOLS_SRC_DIR/be"
 fi
 
 echo ""

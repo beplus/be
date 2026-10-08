@@ -3,21 +3,25 @@
 # The release rules, in one place: the pull-request check and the release workflow both run this.
 #
 #   scripts/release/verify-version.sh pr <base-ref> [<head-branch>]
-#   scripts/release/verify-version.sh release
+#   scripts/release/verify-version.sh release <dev|stage|prod|main>
 #
 # Both modes first check that bin/be, package.json and package-lock.json carry the same version.
 #
-# pr       A PR into main either bumps the version or leaves bin/be alone, because whatever lands
-#          on main is what scripts/install.sh installs. A bump must be newer than the base, not yet
-#          tagged or on npm, and described in CHANGELOG.md. A _versions/vX.Y.Z branch must arrive
-#          with exactly vX.Y.Z.
+# pr       A PR into dev either bumps the version or leaves bin/be alone, because whatever lands
+#          on dev is released, and main (fast-forwarded from dev through stage and prod) is what
+#          scripts/install.sh installs. A bump must be newer than the base, not yet tagged or on
+#          npm, and described in CHANGELOG.md. A _versions/vX.Y.Z branch must arrive with exactly
+#          vX.Y.Z.
 #
-# release  Decides what a push to main still has to do, and writes it as key=value lines to
-#          $GITHUB_OUTPUT (stdout when unset): version, tag, dist_tag, need_publish (not on npm
-#          yet), need_release (not tagged yet), need_github_packages (not in GitHub Packages yet,
-#          checked only when $GITHUB_PACKAGES_TOKEN is set) and source_sha (the commit the version
-#          was cut from: its tag when it has one, else HEAD). Re-checks CHANGELOG.md when any of
-#          them has to happen.
+# release  Decides what a push to dev, stage, prod or main still has to do, and writes it as
+#          key=value lines to $GITHUB_OUTPUT (stdout when unset): version, tag, dist_tag,
+#          source_sha (the commit the version was cut from: its tag when it has one, else HEAD),
+#          need_release (dev: not tagged yet), need_github_packages (dev: not in GitHub Packages
+#          yet) and need_npm (main: not on public npm yet). stage, prod and main build nothing, so
+#          there the version must already be tagged and in GitHub Packages: anything else is a
+#          commit dev never released, and is refused. main must also be on origin/prod, so the
+#          public registry only ever gets what prod already has. GitHub Packages is read with $GITHUB_PACKAGES_TOKEN. Re-checks
+#          CHANGELOG.md when dev still has something to release.
 
 set -euo pipefail
 
@@ -213,60 +217,87 @@ function verify_pr() {
 }
 
 function verify_release() {
+  local branch="${1:?usage: verify-version.sh release <dev|stage|prod|main>}"
   finish
 
-  local need_publish=false need_release=false need_github_packages=false tag_commit source_sha
+  local need_release=false need_github_packages=false need_npm=false tag_commit source_sha
   local dist_tag=latest found=0
-  npm_has_version "${NAME}" "${VERSION}" || need_publish=true
   tag_commit="$(remote_tag_commit "${TAG}")"
-  [[ -n "${tag_commit}" ]] || need_release=true
   source_sha="${tag_commit:-$(git rev-parse HEAD)}"
   [[ "${VERSION}" != *-* ]] || dist_tag=next
 
-  # GitHub Packages is a mirror: a registry that cannot be read must not hold up the npm release,
-  # so an unclear answer means "try to publish", and that job reports the actual error.
   if [[ -n "${GITHUB_PACKAGES_TOKEN:-}" ]]; then
     registry_has_version "${GITHUB_PACKAGES_REGISTRY}" "${NAME}" "${VERSION}" "${GITHUB_PACKAGES_TOKEN}" || found=$?
-    case "${found}" in
-      0) ;;
-      1) need_github_packages=true ;;
-      *) need_github_packages=true
-         warning "Cannot tell whether GitHub Packages has ${NAME}@${VERSION}, so publishing it is attempted." ;;
-    esac
   else
+    found=2
     notice "GITHUB_PACKAGES_TOKEN is not set, so GitHub Packages is not checked."
   fi
 
-  # Publishing must not put a commit's code under a tag that names a different commit.
-  if [[ "${need_publish}" == "true" && -n "${tag_commit}" && "${tag_commit}" != "$(git rev-parse HEAD)" ]]; then
-    error "${NAME}@${VERSION} is not on npm, but tag ${TAG} points at ${tag_commit}, not HEAD. Publish from that commit or bump the version."
-  fi
-  if [[ "${need_publish}" == "true" || "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
-    check_changelog "${TAG}"
-  fi
+  case "${branch}" in
+    dev)
+      [[ -n "${tag_commit}" ]] || need_release=true
+      # A registry that gives no clear answer means "try to publish"; that step reports the error.
+      case "${found}" in
+        0) ;;
+        1) need_github_packages=true ;;
+        *) need_github_packages=true
+           warning "Cannot tell whether GitHub Packages has ${NAME}@${VERSION}, so publishing it is attempted." ;;
+      esac
+      if [[ "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
+        check_changelog "${TAG}"
+      fi
+      ;;
+    stage | prod | main)
+      [[ -n "${tag_commit}" ]] \
+        || error "${TAG} is not tagged, so dev never released ${NAME}@${VERSION}. Fast-forward ${branch} to a commit dev released."
+      case "${found}" in
+        0) ;;
+        1) error "${NAME}@${VERSION} is not in GitHub Packages, so dev never released it. Fast-forward ${branch} to a commit dev released." ;;
+        *) error "Cannot tell whether GitHub Packages has ${NAME}@${VERSION}, and ${branch} promotes only what dev published there." ;;
+      esac
+      if [[ "${branch}" == "main" ]]; then
+        if ! git merge-base --is-ancestor HEAD origin/prod 2> /dev/null; then
+          error "main is ahead of prod: the public registry gets only what prod has. Fast-forward main to prod (git push origin origin/prod:main)."
+        fi
+        npm_has_version "${NAME}" "${VERSION}" || need_npm=true
+      fi
+      ;;
+    *)
+      error "A release runs on dev, stage, prod or main, not on ${branch}."
+      ;;
+  esac
   finish
 
-  if [[ "${need_publish}" == "true" || "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
-    notice "Releasing ${NAME}@${VERSION} from ${source_sha} (npm: ${need_publish}, tag and GitHub Release: ${need_release}, GitHub Packages: ${need_github_packages})."
-  elif [[ -n "${GITHUB_PACKAGES_TOKEN:-}" ]]; then
-    notice "Nothing to release: ${NAME}@${VERSION} is already on npm and in GitHub Packages, and tagged ${TAG}."
-  else
-    notice "Nothing to release: ${NAME}@${VERSION} is already on npm and tagged ${TAG}."
-  fi
+  case "${branch}" in
+    dev)
+      if [[ "${need_release}" == "true" || "${need_github_packages}" == "true" ]]; then
+        notice "Releasing ${NAME}@${VERSION} on dev from ${source_sha} (tag and GitHub pre-release: ${need_release}, GitHub Packages: ${need_github_packages}; dev's CodeArtifact when it lacks it)."
+      else
+        notice "${NAME}@${VERSION} is tagged ${TAG} and in GitHub Packages; dev's CodeArtifact gets it if it lacks it."
+      fi ;;
+    main)
+      if [[ "${need_npm}" == "true" ]]; then
+        notice "Publishing ${NAME}@${VERSION} (${TAG}) to the public npm registry."
+      else
+        notice "Nothing to publish: ${NAME}@${VERSION} is already on the public npm registry."
+      fi ;;
+    *)
+      notice "Promoting ${NAME}@${VERSION} (${TAG}) to ${branch}'s CodeArtifact$([[ "${branch}" == "prod" ]] && echo ", and making its GitHub Release a full release")." ;;
+  esac
 
   {
     echo "version=${VERSION}"
     echo "tag=${TAG}"
     echo "dist_tag=${dist_tag}"
     echo "source_sha=${source_sha}"
-    echo "need_publish=${need_publish}"
     echo "need_release=${need_release}"
     echo "need_github_packages=${need_github_packages}"
+    echo "need_npm=${need_npm}"
   } >> "${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
 case "${1:-}" in
   pr) shift; verify_pr "$@" ;;
-  release) verify_release ;;
-  *) echo "usage: verify-version.sh pr <base-ref> [<head-branch>] | release" >&2; exit 2 ;;
+  release) shift; verify_release "$@" ;;
+  *) echo "usage: verify-version.sh pr <base-ref> [<head-branch>] | release <dev|stage|prod|main>" >&2; exit 2 ;;
 esac
