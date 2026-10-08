@@ -40,30 +40,56 @@ npmrc="${temp}/.npmrc-github"
 echo '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "${npmrc}"
 
 #
-# versions <where> <npm args...> — every version of @beplus/be a registry has, one a line; nothing
-# when it has none. Any other answer stops the run.
+# lookup <where> "<spec> …" <npm args...> — what a registry has of @beplus/be, as
+# {"versions": […], "dist-tags": {…}}; {} when it has none. `npm view` answers only for a version its
+# spec matches, `latest` when it names none, and prints nothing for a package without `latest` (dev
+# publishes with `--tag dev`), so each spec in turn ("-" for `latest`) names a version the registry
+# may have, and the first that matches answers for the whole package. Any other answer stops the run.
 #
 
-function versions() {
-  local where="$1" out err
-  shift
+function lookup() {
+  local where="$1" spec target out err
+  local -a specs
+  read -ra specs <<< "$2"
+  shift 2
   err="$(mktemp)"
-  if out="$(npm view "${name}" versions --json "$@" 2> "${err}")"; then
-    rm -f "${err}"
-    node -e 'console.log([].concat(JSON.parse(process.argv[1] || "[]")).join("\n"))' "${out}"
-  elif grep -q E404 <<< "${out}$(cat "${err}")"; then
-    rm -f "${err}"
-  else
-    echo "::error::Cannot list the versions of ${name} in ${where}: ${out}$(cat "${err}")" >&2
-    rm -f "${err}"
-    return 1
-  fi
+  for spec in "${specs[@]}"; do
+    target="${name}"
+    [[ "${spec}" == "-" ]] || target="${name}@${spec}"
+    if out="$(npm view "${target}" versions dist-tags --json "$@" 2> "${err}")"; then
+      if [[ -n "${out}" ]]; then
+        rm -f "${err}"
+        echo "${out}"
+        return 0
+      fi
+    elif grep -q 'No match found for version' <<< "${out}$(cat "${err}")"; then
+      continue
+    elif grep -q E404 <<< "${out}$(cat "${err}")"; then
+      break
+    else
+      echo "::error::Cannot list the versions of ${name} in ${where}: ${out}$(cat "${err}")" >&2
+      rm -f "${err}"
+      return 1
+    fi
+  done
+  rm -f "${err}"
+  echo '{}'
 }
 
-released="$(versions "GitHub Packages" --userconfig "${npmrc}" --@beplus:registry="${github}")"
-here="$(versions "${BE_ENVIRONMENT}'s CodeArtifact" --registry="${registry}" --@beplus:registry="${registry}")"
-# A catch-up tag an earlier run could not remove (no PutPackageMetadata, or cancelled), if any.
-stale="$(npm view "${name}" dist-tags.catch-up --registry="${registry}" --@beplus:registry="${registry}" 2> /dev/null || true)"
+#
+# field <json> <expression> — a value out of lookup's answer, one a line when it is a list
+#
+
+function field() {
+  node -e '
+    const info = JSON.parse(process.argv[1]);
+    console.log([].concat(new Function("info", "return " + process.argv[2])(info) ?? []).join("\n"));
+  ' "$1" "$2"
+}
+
+# The version this commit carries: verify-version.sh made sure GitHub Packages has it.
+github_info="$(lookup "GitHub Packages" "${version}" --userconfig "${npmrc}" --@beplus:registry="${github}")"
+released="$(field "${github_info}" 'info.versions')"
 
 # npm's own copy of semver, which every npm carries: nothing is installed for this.
 # shellcheck disable=SC2016 # ${…} is a JavaScript template literal, not a shell expansion
@@ -72,6 +98,13 @@ earlier="$(node -e '
   const released = require("fs").readFileSync(0, "utf8").split("\n").filter(Boolean);
   console.log(semver.sort(released.filter((v) => semver.lt(v, process.argv[2]))).join("\n"));
 ' "$(npm root -g)" "${version}" <<< "${released}")"
+
+# `latest`, else any version dev released up to here, newest first.
+newest_first="$(awk '{ lines[NR] = $0 } END { for (i = NR; i > 0; i--) print lines[i] }' <<< "${earlier}" | tr '\n' ' ')"
+here_info="$(lookup "${BE_ENVIRONMENT}'s CodeArtifact" "- ${version} ${newest_first}" --registry="${registry}" --@beplus:registry="${registry}")"
+here="$(field "${here_info}" 'info.versions')"
+# A catch-up tag an earlier run could not remove (no PutPackageMetadata, or cancelled), if any.
+stale="$(field "${here_info}" 'info["dist-tags"]?.["catch-up"]')"
 
 dir="$(mktemp -d)"
 caught_up=()
