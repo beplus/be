@@ -7,7 +7,8 @@ name: Release
 #          pre-release, and publishes that tarball to GitHub Packages (dist-tag `dev`), then to
 #          dev's CodeArtifact — npm.beplus.cloud, where the estates' builds install `be` from.
 #   stage  Builds nothing: fetches the tarball dev published from GitHub Packages and publishes it
-#          byte for byte to stage's CodeArtifact. GitHub Packages tags it `stage`.
+#          byte for byte to stage's CodeArtifact, with every earlier version dev released that
+#          stage's CodeArtifact lacks. GitHub Packages tags it `stage`.
 #   prod   The same into prod's CodeArtifact (GitHub Packages tags it `latest`), and the GitHub
 #          Release becomes a full release, marked latest.
 #   main   The public channel, and the one thing `be` has that the libraries do not: the same
@@ -190,6 +191,14 @@ jobs:
         with:
           BE_CLI_VERSION: ${{ vars.BE_CLI_VERSION }}
 
+      # A fast-forward promotes the commits in between too: every version dev released before this
+      # one that this CodeArtifact lacks goes out first, oldest first, without touching `latest`.
+      - name: Catch up on the versions before it
+        id: catch-up
+        run: scripts/release/catch-up-codeartifact.sh "${VERSION}"
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
       - name: Publish to CodeArtifact
         run: scripts/release/publish-codeartifact.sh ./npm/*.tgz
 
@@ -206,15 +215,25 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
           PROMOTED_TAG: ${{ github.ref_name == 'prod' && 'latest' || github.ref_name }}
 
-      - name: Make the GitHub release a full release
+      # The earlier versions prod has become full releases too, never marked latest, so a release
+      # an earlier promotion skipped (or left a pre-release) is fixed; this version's goes last.
+      - name: Make the GitHub releases full releases
         if: github.ref_name == 'prod'
         run: |
-          if [[ "$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isPrerelease --jq .isPrerelease)" == "true" ]]; then
+          prereleases="$(gh release list --repo "${GITHUB_REPOSITORY}" --exclude-drafts --limit 1000 \
+            --json tagName,isPrerelease --jq '.[] | select(.isPrerelease) | .tagName')"
+          for version in ${EARLIER}; do
+            if grep -qxF "v${version}" <<< "${prereleases}"; then
+              gh release edit "v${version}" --repo "${GITHUB_REPOSITORY}" --prerelease=false --latest=false
+            fi
+          done
+          if grep -qxF "${TAG}" <<< "${prereleases}"; then
             if [[ "${DIST_TAG}" == "latest" ]]; then latest=(--latest); else latest=(--latest=false); fi
             gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --prerelease=false "${latest[@]}"
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          EARLIER: ${{ steps.catch-up.outputs.earlier }}
 
       - name: Summary
         run: |
@@ -222,7 +241,12 @@ jobs:
             echo "### Promoted ${TAG} to ${GITHUB_REF_NAME}"
             echo
             echo "- ${GITHUB_REF_NAME}'s CodeArtifact: dist-tag \`${DIST_TAG}\`, the bytes dev published"
+            if [[ -n "${CAUGHT_UP}" ]]; then
+              echo "- caught up on the versions dev released before it: v${CAUGHT_UP// /, v}"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          CAUGHT_UP: ${{ steps.catch-up.outputs.caught_up }}
 
   # main only: the public registry. Its own job because npm's trusted publisher is bound to the
   # `npm` environment, whose deployment branch is main.

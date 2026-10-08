@@ -9,8 +9,8 @@ fast-forwarded from it and build nothing. Nobody publishes by hand. The
 | branch | what a push does |
 | --- | --- |
 | `dev` | packs the version **once**, tags it `vX.Y.Z` with a GitHub **pre-release**, publishes the tarball to **GitHub Packages** (dist-tag `dev`), then to **dev's CodeArtifact** — `npm.beplus.cloud`, where the estates' builds install `be` from |
-| `stage` | fetches that tarball from GitHub Packages and publishes it, byte for byte, to **stage's CodeArtifact**; GitHub Packages tags it `stage` |
-| `prod` | the same into **prod's CodeArtifact** (GitHub Packages tags it `latest`), and the GitHub Release becomes a **full release**, marked latest |
+| `stage` | fetches that tarball from GitHub Packages and publishes it, byte for byte, to **stage's CodeArtifact**, with every earlier version dev released that it lacks; GitHub Packages tags it `stage` |
+| `prod` | the same into **prod's CodeArtifact** (GitHub Packages tags it `latest`), and the GitHub Release becomes a **full release**, marked latest (the earlier versions' too, never marked latest) |
 | `main` | the public channel, and the one thing `be` has that the libraries don't: the same bytes to the **public npm registry**, with provenance. `main` publishes only what `prod` already has |
 
 ## The flow
@@ -35,6 +35,14 @@ prod  ──fast-forward──▶  main  ──▶  public npm
    proven itself there, `prod` to `stage` (`git push origin origin/stage:prod`); and to make it
    public, `main` to `prod` (`git push origin origin/prod:main`). Never commit to `stage`, `prod`
    or `main` directly.
+
+You don't have to promote every release. A fast-forward promotes the commits in between too, so
+`stage` and `prod` also publish every earlier version dev released that their CodeArtifact lacks
+([`catch-up-codeartifact.sh`](../scripts/release/catch-up-codeartifact.sh)): oldest first, under a
+temporary `catch-up` dist-tag, so `latest` is only ever the version the branch is on. Each
+CodeArtifact keeps every version released up to its branch, and an estate that pinned one on dev
+installs it there too. A version the registry refuses (one archived there on purpose) is a
+warning, and the next promotion tries again. `main` publishes only the version its commit carries.
 
 A PR that doesn't touch `bin/be` (docs, tests, CI) can merge without a bump, and then releases
 nothing. A PR that changes `bin/be` must bump. `scripts/install.sh` installs from `main`, so
