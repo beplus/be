@@ -11,8 +11,9 @@
 # own promotion.
 #
 # Oldest first, under a `catch-up` dist-tag that is removed afterwards, so `latest` stays where
-# publish-codeartifact.sh puts it. A version the registry refuses (one archived there on purpose) is
-# a warning, and the next promotion tries it again.
+# publish-codeartifact.sh puts it; so is one an earlier run left behind. Removing a dist-tag needs
+# codeartifact:PutPackageMetadata on the environment's npm-publishing role. A version the registry
+# refuses (one archived there on purpose) is a warning, and the next promotion tries it again.
 #
 # Writes caught_up (the versions published now) and earlier (every version before <version> the
 # CodeArtifact has now), space-separated, as key=value lines to $GITHUB_OUTPUT (stdout when unset).
@@ -61,6 +62,8 @@ function versions() {
 
 released="$(versions "GitHub Packages" --userconfig "${npmrc}" --@beplus:registry="${github}")"
 here="$(versions "${BE_ENVIRONMENT}'s CodeArtifact" --registry="${registry}" --@beplus:registry="${registry}")"
+# A catch-up tag an earlier run could not remove (no PutPackageMetadata, or cancelled), if any.
+stale="$(npm view "${name}" dist-tags.catch-up --registry="${registry}" --@beplus:registry="${registry}" 2> /dev/null || true)"
 
 # npm's own copy of semver, which every npm carries: nothing is installed for this.
 # shellcheck disable=SC2016 # ${…} is a JavaScript template literal, not a shell expansion
@@ -92,11 +95,15 @@ while read -r v; do
 done <<< "${earlier}"
 
 if [[ "${#caught_up[@]}" -gt 0 ]]; then
-  npm dist-tag rm "${name}" catch-up --registry="${registry}" --@beplus:registry="${registry}" > /dev/null \
-    || echo "::warning::Could not remove the catch-up dist-tag from ${name} in ${BE_ENVIRONMENT}'s CodeArtifact."
   echo "Caught up on ${caught_up[*]}."
 elif [[ "${#refused[@]}" -eq 0 ]]; then
   echo "${BE_ENVIRONMENT}'s CodeArtifact already has every version dev released before ${version}."
+fi
+
+if [[ "${#caught_up[@]}" -gt 0 || -n "${stale}" ]]; then
+  [[ -z "${stale}" ]] || echo "Removing the catch-up dist-tag an earlier run left on ${stale}."
+  npm dist-tag rm "${name}" catch-up --registry="${registry}" --@beplus:registry="${registry}" > /dev/null \
+    || echo "::warning::Could not remove the catch-up dist-tag from ${name} in ${BE_ENVIRONMENT}'s CodeArtifact: the role needs codeartifact:PutPackageMetadata. The next promotion tries again."
 fi
 
 {

@@ -39,7 +39,9 @@ prod  ──fast-forward──▶  main  ──▶  public npm
 You don't have to promote every release. A fast-forward promotes the commits in between too, so
 `stage` and `prod` also publish every earlier version dev released that their CodeArtifact lacks
 ([`catch-up-codeartifact.sh`](../scripts/release/catch-up-codeartifact.sh)): oldest first, under a
-temporary `catch-up` dist-tag, so `latest` is only ever the version the branch is on. Each
+temporary `catch-up` dist-tag, so `latest` is only ever the version the branch is on. Removing
+that tag needs `codeartifact:PutPackageMetadata` on the environment's `npm-publishing` role; a tag
+a run could not remove goes on the next one. Each
 CodeArtifact keeps every version released up to its branch, and an estate that pinned one on dev
 installs it there too. A version the registry refuses (one archived there on purpose) is a
 warning, and the next promotion tries again. `main` publishes only the version its commit carries.
