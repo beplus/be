@@ -21,7 +21,7 @@ Show the fixed output if appropriate.
 ## Release
 
 <!--
-Merging a PR into main that bumps the version publishes it (docs/releasing.md). Pick one:
+Merging a PR into dev that bumps the version releases it on dev; fast-forwarding stage and then prod promotes it (docs/releasing.md). Pick one:
 -->
 
 - [ ] Releases vX.Y.Z: ran `bin/bump …` and described it in CHANGELOG.md

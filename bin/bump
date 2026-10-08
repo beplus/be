@@ -6,7 +6,8 @@
 #
 # Writes the new version into package.json, package-lock.json and bin/be, and opens its section in
 # CHANGELOG.md, moving any notes written under [Unreleased] into it. Commits, tags and publishes
-# nothing: put the result in a PR into main, and merging that PR releases it (docs/releasing.md).
+# nothing: put the result in a PR into dev, and merging that PR releases it on dev; fast-forwarding
+# stage and then prod promotes it (docs/releasing.md).
 #
 # On a _versions/vX.Y.Z branch the argument defaults to X.Y.Z, and any other version is refused.
 # Re-running it for the version already set only re-syncs the files.
@@ -46,7 +47,7 @@ sed -i.bak "s/^VERSION=\".*\"\$/VERSION=\"v${version}\"/" bin/be
 rm -f bin/be.bak
 
 #
-# CHANGELOG.md: point [Unreleased] at what main has on top of this version, and open the version's
+# CHANGELOG.md: point [Unreleased] at what dev has on top of this version, and open the version's
 # section with whatever [Unreleased] collected (kept as is when the section already exists).
 #
 
@@ -58,7 +59,7 @@ fi
 awk \
   -v tag="v${version}" \
   -v date="$(date +%m/%d/%Y)" \
-  -v link="$(node -p 'require("./package.json").homepage')/compare/v${version}...main" \
+  -v link="$(node -p 'require("./package.json").homepage')/compare/v${version}...dev" \
   -v has_section="${has_section}" '
   function flush(   i, first, last) {
     print ""
@@ -91,4 +92,4 @@ echo "Bumped to v${version}: package.json, package-lock.json, bin/be, CHANGELOG.
 if ! scripts/release/changelog-notes.sh "v${version}" > /dev/null 2>&1; then
   echo "Next: describe the release under \"## [v${version}]\" in CHANGELOG.md."
 fi
-echo "Then commit and open a PR into main; merging it publishes v${version}."
+echo "Then commit and open a PR into dev; merging it releases v${version} on dev."

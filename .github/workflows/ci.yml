@@ -1,7 +1,7 @@
 name: CI
 
-# Pull requests run it directly; the Release workflow calls it on every push to main, so the
-# merge result is tested again before anything is published.
+# Pull requests run it directly; the Release workflow calls it on every push to dev, stage, prod
+# and main, so the merge result is tested again before anything is published or promoted.
 
 on:
   pull_request:
@@ -40,8 +40,9 @@ jobs:
 
   version:
     name: Version
-    # Only a PR into main cuts a release, so only there do the release rules apply.
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    # Only a PR into dev cuts a release (stage and prod are fast-forwarded from it), so only there
+    # do the release rules apply.
+    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
