@@ -9,7 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-https://github.com/beplus/be/compare/v0.11.0...dev
+https://github.com/beplus/be/compare/v0.12.0...dev
+
+## [v0.12.0] (11/08/2026)
+
+`be` tries a download again when it fails in a way that may pass, as `actions/setup-node` does
+for Node: GitHub, which hosts the beplus CLI releases, answers 504 now and then, most often to
+Actions runners, and one 504 used to fail the whole install. Every request `be` makes is covered:
+the preflight of the tarball, its `SHA256SUMS`, the tarball itself and the release index. An HTTP
+408, 429, 500, 502, 503 or 504, a host that does not resolve or answer, a dropped connection or a
+timeout is tried again, up to 5 attempts in all, waiting 5, 10, 20 and then 40 seconds; anything
+else, such as a 404, fails at once, as before. `BE_DOWNLOAD_ATTEMPTS` sets the number of attempts
+(1 turns retrying off) and `BE_DOWNLOAD_RETRY_DELAY` the first wait in seconds, which doubles for
+each later one; `be doctor` shows both. Each retry is logged on stderr, `--quiet` or not, as
+`retrying : <url> answered HTTP 504; attempt 2 of 5 in 5 seconds`, and a last failure as
+`gave up`. A failed attempt leaves nothing behind: a release index or `SHA256SUMS` is output only
+once it has arrived whole. With wget, `be` makes one try at a time (`--tries=1`) and does the
+retrying itself, so a 503 is retried too and a 504 is not retried twenty times over.
 
 ## [v0.11.0] (10/08/2026)
 

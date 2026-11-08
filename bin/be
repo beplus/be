@@ -26,6 +26,16 @@ verbose_log() {
 }
 
 #
+# warn_log <type> <msg>
+# Like verbose_log, but shown even with --quiet: for trouble be works around, such as a download
+# it is about to try again.
+#
+
+warn_log() {
+  >&2 printf "  ${SGR_CYAN}%10s${SGR_RESET} : ${SGR_FAINT}%s${SGR_RESET}\n" "$1" "$2"
+}
+
+#
 # Exit with the given <msg ...>
 #
 
@@ -64,7 +74,7 @@ function n_grep() {
 # Setup and state
 #
 
-VERSION="v0.11.0"
+VERSION="v0.12.0"
 
 BE_PREFIX="${BE_PREFIX-/usr/local}"
 BE_PREFIX=${BE_PREFIX%/}
@@ -103,7 +113,7 @@ if [[ -t 1 ]]; then
 else
   CURL_OPTIONS+=( "--silent" )
 fi
-WGET_OPTIONS=( "-q" "-O-" )
+WGET_OPTIONS=( "-q" )
 
 # Set by set_active_beplus
 g_active_beplus=
@@ -141,6 +151,21 @@ else
   readonly SGR_RED=
   readonly SGR_CYAN=
 fi
+
+# A download that fails in a way the next attempt may not is tried again (see fetch), up to
+# BE_DOWNLOAD_ATTEMPTS attempts in all: GitHub, which hosts the beplus CLI releases, answers 504
+# now and then, most often to Actions runners. The first retry waits BE_DOWNLOAD_RETRY_DELAY
+# seconds, and each later one twice as long as the one before, so the defaults wait 5, 10, 20 and
+# 40 seconds. BE_DOWNLOAD_ATTEMPTS=1 turns retrying off.
+
+BE_DOWNLOAD_ATTEMPTS="${BE_DOWNLOAD_ATTEMPTS:-5}"
+BE_DOWNLOAD_RETRY_DELAY="${BE_DOWNLOAD_RETRY_DELAY:-5}"
+# No leading zero: arithmetic would read 08 as a bad octal number.
+[[ "${BE_DOWNLOAD_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
+  || abort "BE_DOWNLOAD_ATTEMPTS is '${BE_DOWNLOAD_ATTEMPTS}', not a whole number of 1 or more (1 turns retrying off)"
+[[ "${BE_DOWNLOAD_RETRY_DELAY}" =~ ^(0|[1-9][0-9]*)$ ]] \
+  || abort "BE_DOWNLOAD_RETRY_DELAY is '${BE_DOWNLOAD_RETRY_DELAY}', not a whole number of seconds"
+readonly BE_DOWNLOAD_ATTEMPTS BE_DOWNLOAD_RETRY_DELAY
 
 #
 # set_arch <arch> to override $(uname -a)
@@ -629,7 +654,7 @@ install() {
   # sha256sum writes it; v1.0.5 lists `<name>: <hash>`.
   local sums_url="${url%/*}/SHA256SUMS"
   local sums
-  sums="$(do_get_index "${sums_url}")" || abort "failed to download SHA256SUMS for $version (${sums_url})"
+  sums="$(fetch text "${sums_url}")" || abort "failed to download SHA256SUMS for $version (${sums_url})"
   local checksum="$(echo "${sums}" | awk -v name="${url##*/}" '$2 == name { print $1; exit } $1 == name ":" { print $2; exit }')"
   [[ -n "${checksum}" ]] || abort "no checksum for ${url##*/} in ${sums_url}"
 
@@ -641,7 +666,7 @@ install() {
 
   log fetch "$url"
   local archive="${dir}/${url##*/}"
-  if ! do_get "${url}" > "${archive}"; then
+  if ! fetch file "${url}" "${archive}"; then
     rm -f "${archive}"
     abort "failed to download archive for $version"
   fi
@@ -675,17 +700,156 @@ set_quiet() {
 
 #
 # Synopsis: do_get [option...] url
-# Call curl or wget with combination of global and passed options.
+# Call curl or wget with combination of global and passed options, once: doctor shows the command.
+# Downloads go through fetch, which tries again.
 #
 
 function do_get() {
   if command -v curl &> /dev/null; then
     curl "${CURL_OPTIONS[@]}" "$@"
   elif command -v wget &> /dev/null; then
-    wget "${WGET_OPTIONS[@]}" "$@"
+    wget "${WGET_OPTIONS[@]}" -O- "$@"
   else
     abort "curl or wget command required"
   fi
+}
+
+#
+# Synopsis: fetch head|text|file url [file]
+# Fetch <url> with curl, or with wget where there is no curl:
+#   head  ask for the headers only, to check that it is there
+#   text  output the body, such as a release index or SHA256SUMS
+#   file  save the body as <file>, with a progress bar where be shows one
+# An attempt that fails in a way the next one may not (is_transient_failure) is tried again, up
+# to BE_DOWNLOAD_ATTEMPTS attempts in all, the waits doubling from BE_DOWNLOAD_RETRY_DELAY
+# seconds. Returns the status of the last attempt.
+#
+
+function fetch() {
+  local mode="$1"
+  local url="$2"
+  local body="/dev/null"
+  if [[ "${mode}" == "file" ]]; then
+    body="$3"
+  elif [[ "${mode}" == "text" ]]; then
+    # Output only once an attempt succeeds, so that a failed one leaves no part of a body behind.
+    body="$(mktemp)" || return 1
+  fi
+
+  local attempt=1
+  local delay="${BE_DOWNLOAD_RETRY_DELAY}"
+  local code
+  local status
+  while true; do
+    # Start the body afresh: curl leaves the file as it was when an attempt receives nothing.
+    [[ "${body}" != "/dev/null" ]] && : > "${body}"
+    code="$(fetch_attempt "${mode}" "${url}" "${body}")"
+    status=$?
+    [[ "${status}" -eq 0 ]] && break
+    is_transient_failure "${status}" "${code}" || break
+    if [[ "${attempt}" -ge "${BE_DOWNLOAD_ATTEMPTS}" ]]; then
+      if [[ "${attempt}" -gt 1 ]]; then
+        warn_log "gave up" "${url} $(display_fetch_failure "${status}" "${code}") on attempt ${attempt} of ${BE_DOWNLOAD_ATTEMPTS}"
+      fi
+      break
+    fi
+    local unit="seconds"
+    [[ "${delay}" -eq 1 ]] && unit="second"
+    warn_log "retrying" "${url} $(display_fetch_failure "${status}" "${code}"); attempt $(( attempt + 1 )) of ${BE_DOWNLOAD_ATTEMPTS} in ${delay} ${unit}"
+    sleep "${delay}"
+    attempt=$(( attempt + 1 ))
+    delay=$(( delay * 2 ))
+  done
+
+  if [[ "${mode}" == "text" ]]; then
+    [[ "${status}" -eq 0 ]] && cat "${body}"
+    rm -f "${body}"
+  fi
+  return "${status}"
+}
+
+#
+# Synopsis: fetch_attempt head|text|file url body
+# One request for <url>, as fetch describes, with the body written into the file <body>. Outputs
+# the HTTP status of the last response (000 when none came) and returns curl's or wget's status.
+#
+
+function fetch_attempt() {
+  local mode="$1"
+  local url="$2"
+  local body="$3"
+  if command -v curl &> /dev/null; then
+    local options=( "${CURL_OPTIONS[@]}" )
+    case "${mode}" in
+      head) options+=( "--silent" "--head" ) ;;
+      # --silent to suppress progress et al
+      text) options=( "--silent" "--compressed" "${options[@]}" ) ;;
+    esac
+    curl "${options[@]}" --output "${body}" --write-out '%{http_code}' "${url}"
+  elif command -v wget &> /dev/null; then
+    # One try: fetch does the trying again (GNU wget would retry a 504 twenty times itself, but
+    # not a 503). --server-response prints each response's status line on stderr.
+    local options=( "${WGET_OPTIONS[@]}" "--tries=1" "--server-response" )
+    if [[ "${mode}" == "head" ]]; then
+      options+=( "--spider" )
+    else
+      options+=( "-O" "${body}" )
+    fi
+    local response
+    response="$(wget "${options[@]}" "${url}" 2>&1)"
+    local status=$?
+    echo "${response}" | awk '$1 ~ /^HTTP\// { code = $2 } END { print (code == "" ? "000" : code) }'
+    return "${status}"
+  else
+    abort "curl or wget command required"
+  fi
+}
+
+#
+# Synopsis: is_transient_failure status http-code
+# Whether an attempt that failed with curl's or wget's <status>, after the server answered
+# <http-code> (000 for no answer), may succeed when made again: the server answered 408, 429, 500,
+# 502, 503 or 504, or it gave no full answer, because its name did not resolve, it could not be
+# reached, the connection dropped or it timed out. Any other answer, such as a 404, is final, and
+# so is a failure of be's own, such as a file it cannot write.
+#
+
+function is_transient_failure() {
+  case "$2" in
+    408|429|500|502|503|504) return 0 ;;
+    [45][0-9][0-9]) return 1 ;;
+  esac
+  if command -v curl &> /dev/null; then
+    # https://curl.se/libcurl/c/libcurl-errors.html: the proxy or host did not resolve (5, 6), no
+    # connection (7), an HTTP/2 or HTTP/3 error (16, 92, 95), a partial body (18), a timeout
+    # (28), a failed TLS handshake (35), an empty reply (52), sending or receiving failed (55, 56).
+    case "$1" in
+      5|6|7|16|18|28|35|52|55|56|92|95) return 0 ;;
+    esac
+  else
+    # GNU wget's "network failure". BusyBox wget exits 1 for any failure, so there only what the
+    # server answered is tried again.
+    [[ "$1" -eq 4 ]] && return 0
+  fi
+  return 1
+}
+
+#
+# Synopsis: display_fetch_failure status http-code
+# How a fetch attempt failed, for a log message.
+#
+
+function display_fetch_failure() {
+  case "$2" in
+    [45][0-9][0-9]) echo "answered HTTP $2" ;;
+    *)
+      if command -v curl &> /dev/null; then
+        echo "failed (curl exit $1)"
+      else
+        echo "failed (wget exit $1)"
+      fi
+      ;;
+  esac
 }
 
 #
@@ -703,23 +867,6 @@ function display_sha256() {
     line="$(shasum -a 256 < "$1")"
   fi
   echo "${line%% *}"
-}
-
-#
-# Synopsis: do_get_index [option...] url
-# Call curl or wget with combination of global and passed options,
-# with options tweaked to be more suitable for getting index.
-#
-
-function do_get_index() {
-  if command -v curl &> /dev/null; then
-    # --silent to suppress progress et al
-    curl --silent --compressed "${CURL_OPTIONS[@]}" "$@"
-  elif command -v wget &> /dev/null; then
-    wget "${WGET_OPTIONS[@]}" "$@"
-  else
-    abort "curl or wget command required"
-  fi
 }
 
 #
@@ -819,13 +966,8 @@ function exec_with_version() {
 #
 
 function is_ok() {
-  # Note: both curl and wget can follow redirects, as present on some mirrors (e.g. https://npm.taobao.org/mirrors/node).
-  # The output is complicated with redirects, so keep it simple and use command status rather than parse output.
-  if command -v curl &> /dev/null; then
-    do_get --silent --head "$1" > /dev/null || return 1
-  else
-    do_get --spider "$1" > /dev/null || return 1
-  fi
+  # Both curl and wget follow redirects, which GitHub answers release downloads with.
+  fetch head "$1"
 }
 
 #
@@ -1044,7 +1186,7 @@ function get_latest_resolved_version() {
 display_remote_index() {
   local index_url="${g_mirror_url}/index.tab"
   # tail to remove header line
-  do_get_index "${index_url}" | tail -n +2 | cut -f 1,3,10
+  fetch text "${index_url}" | tail -n +2 | cut -f 1,3,10
   if [[ "${PIPESTATUS[0]}" -ne 0 ]]; then
     # Reminder: abort will only exit subshell, but consistent error display
     abort "failed to download version index (${index_url})"
@@ -1132,7 +1274,7 @@ function display_remote_versions() {
         else [0, 0, 0, 0, 0, []]
         end;'
 
-  do_get_index "${index_url}" \
+  fetch text "${index_url}" \
     | jq -r "${jq_semver_key} [ ${jq_release_filter} | .name ] | sort_by(semver_key) | reverse | .[]" \
     | n_grep -E "${match}" \
     | awk "NR<=${match_count}" \
@@ -1237,6 +1379,7 @@ function show_diagnostics() {
   echo "install destination: ${BE_PREFIX}"
   [[ -n "${BE_PREFIX}" ]] && echo "PATH: ${PATH}"
   echo "ls-remote max matches: ${BE_MAX_REMOTE_MATCHES}"
+  echo "download attempts: ${BE_DOWNLOAD_ATTEMPTS}, the first retry after ${BE_DOWNLOAD_RETRY_DELAY} seconds"
 
   printf "\nProxy\n"
   # disable "var is referenced but not assigned": https://github.com/koalaman/shellcheck/wiki/SC2154
