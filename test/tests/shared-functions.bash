@@ -12,6 +12,8 @@ function unset_n_env(){
   unset BE_DOWNLOAD_MIRROR
   unset BE_MAX_REMOTE_MATCHES
   unset BE_RELEASE_INDEX_URL
+  unset BE_DOWNLOAD_ATTEMPTS
+  unset BE_DOWNLOAD_RETRY_DELAY
   unset HTTP_USER
   unset HTTP_PASSWORD
   unset GREP_OPTIONS
@@ -35,17 +37,14 @@ function setup_tmp_prefix() {
 }
 
 
-# Create a local mirror laid out as the beplus CLI release publishes one, and point be at it:
-# for each <version> given, v<version>/ holds this machine's tarball, with a stub beplus that
-# prints the version banner, and SHA256SUMS beside it. The mirror is a file:// URL, which be reads
-# with curl only (wget fetches http, https and ftp), so without curl the test is skipped.
-# Usage: setup_tmp_mirror version...
+# Create a local mirror laid out as the beplus CLI release publishes one: for each <version>
+# given, v<version>/ holds this machine's tarball, with a stub beplus that prints the version
+# banner, and SHA256SUMS beside it.
+# Usage: make_tmp_mirror version...
 # Globals:
 #   TMP_MIRROR_DIR
-#   BE_MIRROR
 
-function setup_tmp_mirror() {
-  command -v curl > /dev/null || skip "the local mirror is a file:// URL, which needs curl"
+function make_tmp_mirror() {
   TMP_MIRROR_DIR="$(mktemp -d)"
   [ -d "${TMP_MIRROR_DIR}" ] || exit 2
   export TMP_MIRROR_DIR
@@ -64,8 +63,61 @@ function setup_tmp_mirror() {
       (cd "${release}" && shasum -a 256 "${tarball}" > SHA256SUMS)
     fi
   done
+}
 
+
+# make_tmp_mirror, with be pointed at it as a file:// URL. be reads that with curl only (wget
+# fetches http, https and ftp), so without curl the test is skipped.
+# Usage: setup_tmp_mirror version...
+# Globals:
+#   TMP_MIRROR_DIR
+#   BE_MIRROR
+
+function setup_tmp_mirror() {
+  command -v curl > /dev/null || skip "the local mirror is a file:// URL, which needs curl"
+  make_tmp_mirror "$@"
   export BE_MIRROR="file://${TMP_MIRROR_DIR}"
+}
+
+
+# make_tmp_mirror, served on 127.0.0.1 by flaky-mirror.js and with be pointed at it: a request for
+# a file whose <file>.plan lists answers gets those first, one per request, such as a 504 (see
+# flaky-mirror.js). Each request is logged to ${TMP_MIRROR_DIR}/requests.log. Needs node. Stop it
+# with stop_flaky_mirror.
+# Usage: setup_flaky_mirror version...
+# Globals:
+#   TMP_MIRROR_DIR
+#   FLAKY_MIRROR_PID
+#   BE_MIRROR
+
+function setup_flaky_mirror() {
+  command -v node > /dev/null || skip "the flaky mirror runs on node"
+  make_tmp_mirror "$@"
+  local port_file="${TMP_MIRROR_DIR}/port"
+  # With fd 3 open, bats would wait for the server to exit.
+  node "${BATS_TEST_DIRNAME}/flaky-mirror.js" "${TMP_MIRROR_DIR}" "${port_file}" > /dev/null 2>&1 3>&- &
+  FLAKY_MIRROR_PID=$!
+  local waited=0
+  while [[ ! -s "${port_file}" ]]; do
+    if (( waited++ >= 100 )); then
+      stop_flaky_mirror
+      echo "flaky-mirror.js did not start within 10 seconds" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  export BE_MIRROR="http://127.0.0.1:$(cat "${port_file}")"
+  # Not through a proxy that may be set for the tests.
+  export no_proxy="127.0.0.1${no_proxy:+,${no_proxy}}"
+  export NO_PROXY="127.0.0.1${NO_PROXY:+,${NO_PROXY}}"
+}
+
+
+function stop_flaky_mirror() {
+  if [[ -n "${FLAKY_MIRROR_PID}" ]]; then
+    kill "${FLAKY_MIRROR_PID}" 2> /dev/null || true
+  fi
+  FLAKY_MIRROR_PID=
 }
 
 #
