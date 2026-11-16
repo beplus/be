@@ -5,6 +5,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
 
 permissions:
@@ -15,7 +16,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gate:
+    # The PR gate (setup-beplus pr-gate/PR-GATE.md): never a draft, and in a stack only the top PR,
+    # whose tree holds every PR below it. Every job below waits for its answer; any other event runs.
+    name: PR gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+      root: ${{ steps.gate.outputs.root }}
+    steps:
+      - id: gate
+        uses: beplus/setup-beplus/pr-gate@v2
+        with:
+          stack: top-only
+
   test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -32,6 +52,8 @@ jobs:
       - run: npm run test:host
 
   lint:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -39,10 +61,11 @@ jobs:
       - run: npm run lint
 
   version:
-    name: Version
+    needs: gate
     # Only a PR into dev cuts a release (stage and prod are fast-forwarded from it), so only there
-    # do the release rules apply.
-    if: github.event_name == 'pull_request' && github.base_ref == 'dev'
+    # do the release rules apply. A stack's top PR is into the PR below it: its root is dev.
+    if: needs.gate.outputs.run == 'true' && (github.event_name == 'pull_request' && (needs.gate.outputs.root || github.base_ref) == 'dev')
+    name: Version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -50,5 +73,5 @@ jobs:
           fetch-depth: 0
       - run: scripts/release/verify-version.sh pr "origin/${BASE_REF}" "${HEAD_REF}"
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ (needs.gate.outputs.root || github.base_ref) }}
           HEAD_REF: ${{ github.head_ref }}
